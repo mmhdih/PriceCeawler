@@ -51,10 +51,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: ساخت فایل اجرایی
-        run: |
-          python scripts/version_info.py
-          pyinstaller --clean --noconfirm PriceCeawler.spec
+      # جدا نگه داشتن این دو گام عمدی است: PowerShell با شکست یک دستور native
+      # متوقف نمی‌شود و اگر در یک بلوک باشند، خطای اولی نادیده گرفته می‌شود.
+      - name: ساخت اطلاعات نسخه ویندوز
+        run: python scripts/version_info.py
+
+      - name: اجرای PyInstaller
+        run: pyinstaller --clean --noconfirm PriceCeawler.spec
 
       - name: بررسی سلامت فایل ساخته‌شده
         shell: pwsh

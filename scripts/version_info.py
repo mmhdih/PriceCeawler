@@ -13,6 +13,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from priceceawler.__main__ import configure_console  # noqa: E402
 from priceceawler.version import APP_NAME, __version__  # noqa: E402
 
 TEMPLATE = """VSVersionInfo(
@@ -42,6 +43,7 @@ TEMPLATE = """VSVersionInfo(
 
 
 def main() -> int:
+    configure_console()  # a Windows console cannot encode ✔/✖ on cp1252
     match = re.match(r"^(\d+)\.(\d+)\.(\d+)", __version__)
     if not match:
         print(f"✖ نسخه نامعتبر است: {__version__}", file=sys.stderr)

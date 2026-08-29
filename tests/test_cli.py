@@ -1,5 +1,7 @@
 import io
 import os
+import pathlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -43,6 +45,22 @@ class TestConsoleEncoding(unittest.TestCase):
         finally:
             sys.stdout = original
         self.assertEqual(exit_code, 0)
+
+
+class TestBuildScripts(unittest.TestCase):
+    """The release workflow runs these on a Windows runner using cp1252."""
+
+    def test_version_info_script_runs_on_a_legacy_console(self):
+        root = pathlib.Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            [sys.executable, str(root / "scripts" / "version_info.py")],
+            cwd=root,
+            env={**os.environ, "PYTHONIOENCODING": "cp1252"},
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertTrue((root / "build" / "file_version_info.txt").is_file())
 
 
 class TestParser(unittest.TestCase):
