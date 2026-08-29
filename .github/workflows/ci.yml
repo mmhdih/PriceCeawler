@@ -1,0 +1,87 @@
+name: تست‌ها
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: تست روی ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: نصب وابستگی‌ها
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: اجرای تست‌ها
+        run: python -m unittest discover -s tests -t . -v
+
+  build:
+    name: ساخت آزمایشی نسخه پرتابل ویندوز
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: نصب وابستگی‌ها
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: ساخت فایل اجرایی
+        run: |
+          python scripts/version_info.py
+          pyinstaller --clean --noconfirm PriceCeawler.spec
+
+      - name: بررسی سلامت فایل ساخته‌شده
+        shell: pwsh
+        run: |
+          # doctor بررسی می‌کند که موتور اکسل واقعاً داخل فایل اجرایی بسته‌بندی شده باشد
+          & dist/PriceCeawler.exe doctor --offline
+          if ($LASTEXITCODE -ne 0) { throw "بررسی سلامت (doctor) ناموفق بود." }
+
+          $proc = Start-Process -FilePath dist/PriceCeawler.exe `
+            -ArgumentList '--no-browser', '--port', '8799' -PassThru
+          try {
+            $ok = $false
+            foreach ($attempt in 1..30) {
+              Start-Sleep -Seconds 2
+              try {
+                if ((Invoke-RestMethod 'http://127.0.0.1:8799/health' -TimeoutSec 5).ok) { $ok = $true; break }
+              } catch { }
+            }
+            if (-not $ok) { throw "سرور محلی بالا نیامد." }
+            Write-Host "✔ فایل اجرایی سالم است."
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-preview
+          path: dist/PriceCeawler.exe
+          if-no-files-found: error
+          retention-days: 7
