@@ -25,6 +25,29 @@ BANNER = f"""
 """
 
 
+def configure_console() -> None:
+    """Make Persian output survive a legacy Windows console.
+
+    A Windows console starts on a legacy code page (cp1252/cp437), and Python
+    binds stdout to it, so printing any Persian text raises UnicodeEncodeError
+    and kills the app. Switch the console to UTF-8 and re-wrap the streams.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:  # pragma: no cover - console may be redirected
+            pass
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):  # pragma: no cover
+            pass  # already UTF-8, detached, or not a text stream
+
+
 def _port_is_free(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -207,6 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_console()
     args = build_parser().parse_args(argv)
     if args.command == "crawl":
         return run_crawl(args.symbols)
