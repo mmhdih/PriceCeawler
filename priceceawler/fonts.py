@@ -39,7 +39,9 @@ def font_css() -> str:
     for weight, stem in WEIGHTS:
         local = FONT_DIR / f"{stem}.woff2"
         if bundled and local.is_file():
-            src = f"/assets/fonts/{stem}.woff2"
+            # Relative: this CSS is itself served from .../assets/fonts/, so a bare
+            # filename resolves correctly whatever path prefix the app is mounted under.
+            src = f"{stem}.woff2"
         else:
             src = f"{CDN_BASE}/{stem}.woff2"
         faces.append(_FACE.format(weight=weight, src=src))

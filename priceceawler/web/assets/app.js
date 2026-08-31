@@ -548,7 +548,7 @@ async function persistSettings() {
     end: toLatinDigits($('endDate').value).trim(),
   };
   try {
-    await api('/api/settings', {
+    await api('api/settings', {
       method: 'POST',
       body: {
         symbols: [...state.selected],
@@ -579,7 +579,7 @@ async function fetchSeries(force = false) {
 
   busy(true, force ? 'دریافت تازه از TGJU…' : 'در حال دریافت داده‌ها…');
   try {
-    const payload = await api('/api/series', {
+    const payload = await api('api/series', {
       method: 'POST',
       body: {
         symbols: [...state.selected],
@@ -633,7 +633,7 @@ async function exportAs(format) {
 
   busy(true, 'در حال ساخت فایل خروجی…');
   try {
-    const response = await api('/api/export', {
+    const response = await api('api/export', {
       method: 'POST',
       raw: true,
       body: {
@@ -672,7 +672,7 @@ async function exportAs(format) {
 
 async function refreshArchive() {
   try {
-    const payload = await api('/api/archive');
+    const payload = await api('api/archive');
     renderArchive(payload.archive);
   } catch { /* بی‌اهمیت */ }
 }
@@ -681,7 +681,7 @@ async function crawlNow() {
   if (state.busy) return;
   busy(true, 'در حال کراول روزانه…');
   try {
-    const payload = await api('/api/crawl', { method: 'POST', body: { symbols: [...state.selected] } });
+    const payload = await api('api/crawl', { method: 'POST', body: { symbols: [...state.selected] } });
     renderArchive(payload.archive);
     const added = Object.values(payload.added || {}).reduce((sum, n) => sum + n, 0);
     (payload.errors || []).forEach((error) => toast(error.message, 'error', 8000));
@@ -700,7 +700,7 @@ async function addCustomSymbol() {
     return;
   }
   try {
-    const payload = await api('/api/symbols', {
+    const payload = await api('api/symbols', {
       method: 'POST',
       body: { key, name: $('customName').value.trim(), currency: $('customCurrency').value },
     });
@@ -728,7 +728,7 @@ async function init() {
 
   let meta;
   try {
-    meta = await api('/api/meta');
+    meta = await api('api/meta');
   } catch (error) {
     toast('ارتباط با سرور برقرار نشد. برنامه را دوباره اجرا کنید.', 'error', 12000);
     return;

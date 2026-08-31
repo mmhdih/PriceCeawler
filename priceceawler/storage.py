@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 import tempfile
 import threading
@@ -17,7 +18,7 @@ from typing import Any
 
 from .symbols import DEFAULT_SELECTION
 
-__all__ = ["data_dir", "Settings", "Archive", "read_json", "write_json"]
+__all__ = ["data_dir", "Settings", "Archive", "read_json", "write_json", "get_or_create_secret"]
 
 _DATA_DIR_NAME = "PriceCeawler-Data"
 _lock = threading.RLock()
@@ -77,6 +78,33 @@ def write_json(path: Path, payload: Any) -> None:
     with tmp.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
+
+
+def get_or_create_secret(name: str) -> str:
+    """Return a token that stays the same across process restarts.
+
+    The standalone desktop app mints a fresh random token per run on purpose
+    (closing the window should invalidate any stale browser tab). A WSGI
+    deployment behind a web server (e.g. Passenger) instead spawns several
+    worker *processes* that must all agree on the same token, since a page
+    served by one worker embeds a token that API calls may hit a different
+    worker with. Persisting it to disk makes every worker converge on it.
+    """
+    path = data_dir() / f"{name}.key"
+    with _lock:
+        if path.is_file():
+            existing = path.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+        candidate = secrets.token_urlsafe(24)
+        try:
+            # O_EXCL makes the first writer win; a loser just reads the winner's file.
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            return path.read_text(encoding="utf-8").strip()
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(candidate)
+        return candidate
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
