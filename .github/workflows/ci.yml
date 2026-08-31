@@ -125,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           php test-jalali.php /tmp/jalali_fixtures.json
-          for f in test-tgju.php test-report.php test-xlsx.php test-storage.php test-crawler.php test-license.php test-admin.php test-ajax.php test-bootstrap.php; do
+          for f in test-tgju.php test-report.php test-xlsx.php test-storage.php test-crawler.php test-license.php test-admin.php test-meta-contract.php test-ajax.php test-bootstrap.php; do
             echo "--- $f ---"
             php "$f"
           done

@@ -753,7 +753,6 @@ async function init() {
   const settings = meta.settings || {};
   applyTheme(settings.theme === 'dark' ? 'dark' : 'light');
   $('todayPill').textContent = meta.todayLong;
-  $('dataDir').textContent = `محل ذخیره داده‌ها: ${meta.dataDir}`;
   $('fillGaps').checked = settings.fill_gaps !== false;
   $('autoCrawl').checked = settings.auto_crawl !== false;
 

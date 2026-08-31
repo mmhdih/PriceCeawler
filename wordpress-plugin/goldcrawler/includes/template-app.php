@@ -169,12 +169,11 @@ if (!defined('ABSPATH')) { exit; }
       <div class="card__head">
         <div>
           <h2>آرشیو روزانه</h2>
-          <p class="card__sub" id="archiveSub">داده‌های دریافت‌شده روی همین رایانه ذخیره می‌شوند.</p>
+          <p class="card__sub" id="archiveSub">داده‌های دریافت‌شده روی هاست سایت ذخیره می‌شوند.</p>
         </div>
         <button class="btn btn--soft" id="crawlBtn" type="button">کراول همین حالا</button>
       </div>
       <div class="archive" id="archiveList"></div>
-      <p class="card__sub datadir" id="dataDir"></p>
     </div>
   </section>
 </main>

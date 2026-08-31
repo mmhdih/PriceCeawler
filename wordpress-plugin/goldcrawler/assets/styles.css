@@ -190,7 +190,14 @@
 
 
 .goldcrawler-app input[type="text"], .goldcrawler-app input[type="search"], .goldcrawler-app select {
+  /* Some WebKit/Blink builds size a native type="search" field using its own
+     OS-level decoration box, ignoring author width/box-sizing entirely and
+     letting it overflow its container - stripping that native appearance
+     makes it behave like a normal text input we can size ourselves. */
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
+  max-width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
