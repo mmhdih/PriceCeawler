@@ -18,6 +18,7 @@ final class GC_Storage {
     private static $default_settings = array(
         'symbols' => array('geram18', 'sekee', 'price_dollar_rl'),
         'custom_symbols' => array(),
+        'disabled_symbols' => array(), // built-in GC_Symbols::catalog() keys the admin turned off
         'range_preset' => '30',
         'start' => '',
         'end' => '',

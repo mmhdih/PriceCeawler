@@ -13,6 +13,7 @@ final class GC_Admin {
 
     const PAGE_SLUG = 'goldcrawler-access';
     const NONCE_ACTION = 'goldcrawler_save_access';
+    const NONCE_ACTION_SYMBOLS = 'goldcrawler_save_symbols';
 
     public static function register() {
         add_action('admin_menu', array(__CLASS__, 'add_menu'));
@@ -53,14 +54,77 @@ final class GC_Admin {
         return array('type' => 'success', 'text' => "دسترسی برای {$count} کاربر ذخیره شد."); // Persian digits are cosmetic; not required for an admin screen
     }
 
+    /**
+     * Saves all three symbol-management actions from one form submit:
+     * which built-in TGJU symbols are enabled, which admin-added ("custom")
+     * symbols got deleted, and (optionally) one new custom symbol to add.
+     * Unchecked checkboxes never submit at all in HTML forms, so "enabled"
+     * is derived from what *did* arrive, not from an explicit "disabled" flag.
+     */
+    private static function handle_save_symbols() {
+        if (!isset($_POST['goldcrawler_symbols_nonce']) || !wp_verify_nonce($_POST['goldcrawler_symbols_nonce'], self::NONCE_ACTION_SYMBOLS)) {
+            return array('type' => 'error', 'text' => 'نشست فرم منقضی شده؛ دوباره تلاش کنید.');
+        }
+        if (!current_user_can(GC_License::MANAGE_CAPABILITY)) {
+            return array('type' => 'error', 'text' => 'شما اجازه تغییر این تنظیمات را ندارید.');
+        }
+
+        $enabled = isset($_POST['goldcrawler_enabled']) ? array_flip((array) $_POST['goldcrawler_enabled']) : array();
+        $disabled = array();
+        foreach (GC_Symbols::catalog() as $key => $def) {
+            if (!isset($enabled[$key])) {
+                $disabled[] = $key;
+            }
+        }
+
+        $settings = GC_Storage::get_settings();
+        $to_delete = isset($_POST['goldcrawler_delete_custom']) ? array_flip((array) $_POST['goldcrawler_delete_custom']) : array();
+        $customs = array_values(array_filter((array) $settings['custom_symbols'], function ($c) use ($to_delete) {
+            return !isset($to_delete[$c['key'] ?? '']);
+        }));
+
+        $added_message = '';
+        $new_key = trim((string) ($_POST['goldcrawler_new_key'] ?? ''));
+        if ($new_key !== '') {
+            if (!GC_Symbols::is_valid_custom_key($new_key)) {
+                return array('type' => 'error', 'text' => 'شناسه نماد تازه فقط می‌تواند شامل حروف انگلیسی، عدد، «-»، «_» و «.» باشد (۲ تا ۶۴ کاراکتر).');
+            }
+            $new_name = trim((string) ($_POST['goldcrawler_new_name'] ?? '')) ?: $new_key;
+            $new_group = trim((string) ($_POST['goldcrawler_new_group'] ?? '')) ?: 'نمادهای دلخواه';
+            $new_currency = strtoupper((string) ($_POST['goldcrawler_new_currency'] ?? 'IRR')) === 'USD' ? 'USD' : 'IRR';
+            $new_decimals = max(0, min(8, (int) ($_POST['goldcrawler_new_decimals'] ?? 0)));
+
+            $customs = array_values(array_filter($customs, function ($c) use ($new_key) {
+                return ($c['key'] ?? '') !== $new_key;
+            }));
+            $customs[] = array(
+                'key' => $new_key, 'name' => $new_name, 'group' => $new_group,
+                'currency' => $new_currency, 'decimals' => $new_decimals,
+            );
+            $added_message = " و نماد «{$new_name}» اضافه شد";
+        }
+
+        GC_Storage::update_settings(array(
+            'disabled_symbols' => $disabled,
+            'custom_symbols' => array_slice($customs, -100),
+        ));
+
+        return array('type' => 'success', 'text' => 'فهرست نمادها ذخیره شد' . $added_message . '.');
+    }
+
     public static function render_page() {
         if (!current_user_can(GC_License::MANAGE_CAPABILITY)) {
             wp_die('شما اجازه دسترسی به این صفحه را ندارید.');
         }
 
         $notice = null;
-        if (isset($_POST['goldcrawler_save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
-            $notice = self::handle_save();
+        $symbols_notice = null;
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (isset($_POST['goldcrawler_save'])) {
+                $notice = self::handle_save();
+            } elseif (isset($_POST['goldcrawler_save_symbols'])) {
+                $symbols_notice = self::handle_save_symbols();
+            }
         }
 
         $licensed = GC_License::licensed_user_ids();
@@ -121,6 +185,118 @@ final class GC_Admin {
             . 'document.querySelectorAll(".goldcrawler-user-checkbox").forEach(function(c){if(!c.title){c.disabled=on;}});'
             . '}'
             . '</script>';
+
+        self::render_symbols_section($symbols_notice);
+
         echo '</div>';
+    }
+
+    private static function render_symbols_section($notice) {
+        $settings = GC_Storage::get_settings();
+        $disabled = array_flip((array) $settings['disabled_symbols']);
+        $customs = (array) $settings['custom_symbols'];
+
+        echo '<hr style="margin:32px 0;">';
+        echo '<h1>مدیریت نمادهای TGJU</h1>';
+        echo '<p>از این بخش می‌توانید نمادهای پیش‌فرض را کم یا زیاد کنید و نمادهای دلخواه خودتان'
+            . ' را از سایت <code>tgju.org</code> به ابزار اضافه کنید. تغییرات این بخش برای همه'
+            . ' کاربران ابزار یکسان است (مشترک بین همه، نه جداگانه برای هر کاربر).</p>';
+
+        if ($notice) {
+            $class = $notice['type'] === 'error' ? 'notice-error' : 'notice-success';
+            echo '<div class="notice ' . esc_attr($class) . ' is-dismissible"><p>' . esc_html($notice['text']) . '</p></div>';
+        }
+
+        echo '<form method="post">';
+        wp_nonce_field(self::NONCE_ACTION_SYMBOLS, 'goldcrawler_symbols_nonce');
+
+        // -- بخش ۱: فعال/غیرفعال کردن نمادهای پیش‌فرض ---------------------------
+        echo '<h2 class="title">نمادهای پیش‌فرض (کم‌کردن)</h2>';
+        echo '<p class="description">تیک هر نمادی که نمی‌خواهید کاربران ببینند و دریافت شود را بردارید.'
+            . ' نمادهای غیرفعال از نوار کناری ابزار و از دریافت داده‌ها حذف می‌شوند، اما هر زمان'
+            . ' بخواهید می‌توانید دوباره تیک بزنید و فعالشان کنید.</p>';
+        echo '<p><input type="search" id="goldcrawler-symbol-search" placeholder="جست‌وجوی نماد پیش‌فرض..." '
+            . 'style="max-width:320px" onkeyup="goldcrawlerFilterSymbols(this.value)"></p>';
+        echo '<table class="widefat striped" id="goldcrawler-symbol-table"><thead><tr>'
+            . '<th style="width:40px"></th><th>شناسه (Key)</th><th>نام نمایشی</th><th>گروه</th><th>واحد پول</th>'
+            . '</tr></thead><tbody>';
+        foreach (GC_Symbols::catalog() as $key => $def) {
+            $checked = !isset($disabled[$key]);
+            echo '<tr data-name="' . esc_attr(strtolower($key . ' ' . $def['name'])) . '">';
+            echo '<td><input type="checkbox" name="goldcrawler_enabled[]" value="' . esc_attr($key) . '"' . ($checked ? ' checked' : '') . '></td>';
+            echo '<td><code>' . esc_html($key) . '</code></td>';
+            echo '<td>' . esc_html($def['name']) . '</td>';
+            echo '<td>' . esc_html($def['group']) . '</td>';
+            echo '<td>' . esc_html(GC_Symbols::unit_label($def['currency'])) . '</td>';
+            echo '</tr>';
+        }
+        echo '</tbody></table>';
+
+        // -- بخش ۲: نمادهای دلخواهِ ذخیره‌شده (حذف) -----------------------------
+        echo '<h2 class="title">نمادهای دلخواه فعلی</h2>';
+        if (!$customs) {
+            echo '<p class="description">هنوز هیچ نماد دلخواهی اضافه نکرده‌اید. از فرم پایین همین صفحه یکی اضافه کنید،'
+                . ' یا از داخل خود ابزار (بخش «افزودن نماد دلخواه از TGJU» در نوار کناری) هر کاربر مجاز می‌تواند اضافه کند.</p>';
+        } else {
+            echo '<p class="description">برای حذف یک نماد دلخواه، تیک ستون «حذف» آن را بزنید و «ذخیره» را بزنید.</p>';
+            echo '<table class="widefat striped"><thead><tr>'
+                . '<th style="width:40px">حذف</th><th>شناسه (Key)</th><th>نام نمایشی</th><th>گروه</th><th>واحد پول</th>'
+                . '</tr></thead><tbody>';
+            foreach ($customs as $c) {
+                $ckey = (string) ($c['key'] ?? '');
+                if ($ckey === '') {
+                    continue;
+                }
+                echo '<tr>';
+                echo '<td><input type="checkbox" name="goldcrawler_delete_custom[]" value="' . esc_attr($ckey) . '"></td>';
+                echo '<td><code>' . esc_html($ckey) . '</code></td>';
+                echo '<td>' . esc_html((string) ($c['name'] ?? $ckey)) . '</td>';
+                echo '<td>' . esc_html((string) ($c['group'] ?? 'نمادهای دلخواه')) . '</td>';
+                echo '<td>' . esc_html(GC_Symbols::unit_label((string) ($c['currency'] ?? 'IRR'))) . '</td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table>';
+        }
+
+        // -- بخش ۳: افزودن نماد دلخواه تازه (زیادکردن) --------------------------
+        echo '<h2 class="title">افزودن نماد دلخواه تازه (زیاد‌کردن)</h2>';
+        echo '<table class="form-table" role="presentation"><tbody>';
+
+        echo '<tr><th scope="row"><label for="gc-new-key">شناسه نماد (Key)</label></th><td>'
+            . '<input type="text" id="gc-new-key" name="goldcrawler_new_key" class="regular-text" placeholder="مثلاً price_dollar_rl">'
+            . '<p class="description">این مقدار باید <strong>دقیقاً</strong> همان بخش انتهایی نشانی صفحه‌ی این نماد در سایت'
+            . ' <code>tgju.org</code> باشد. مثلاً برای صفحه‌ی <code>https://www.tgju.org/profile/price_dollar_rl</code>'
+            . ' مقدار <code>price_dollar_rl</code> را وارد کنید. فقط حروف انگلیسی، عدد، «-»، «_» و «.» مجاز است (۲ تا ۶۴ کاراکتر).'
+            . ' اگر این شناسه از قبل جزو نمادهای پیش‌فرض <em>فعال</em> در جدول بالا باشد، این افزودن نادیده گرفته می‌شود؛'
+            . ' یا شناسه دیگری انتخاب کنید یا ابتدا آن نماد پیش‌فرض را از فهرست بالا غیرفعال کنید. این فیلد را خالی بگذارید'
+            . ' اگر فقط می‌خواهید حذف/فعال‌سازی بخش‌های بالا را ذخیره کنید.</p></td></tr>';
+
+        echo '<tr><th scope="row"><label for="gc-new-name">نام نمایشی</label></th><td>'
+            . '<input type="text" id="gc-new-name" name="goldcrawler_new_name" class="regular-text" placeholder="مثلاً دلار آمریکا">'
+            . '<p class="description">همان نامی که به فارسی در فهرست نمادها، نمودار و گزارش‌های خروجی نمایش داده می‌شود.'
+            . ' اگر خالی بگذارید، همان شناسه (Key) به‌عنوان نام نمایش داده می‌شود.</p></td></tr>';
+
+        echo '<tr><th scope="row"><label for="gc-new-group">گروه</label></th><td>'
+            . '<input type="text" id="gc-new-group" name="goldcrawler_new_group" class="regular-text" placeholder="مثلاً ارز، طلا و نقره، یا هر عنوان دلخواه">'
+            . '<p class="description">برای دسته‌بندی و فیلترکردن این نماد در نوار کناری ابزار استفاده می‌شود؛ هر متنی که بخواهید'
+            . ' می‌توانید بنویسید. اگر خالی بگذارید، «نمادهای دلخواه» در نظر گرفته می‌شود.</p></td></tr>';
+
+        echo '<tr><th scope="row"><label for="gc-new-currency">واحد پول</label></th><td>'
+            . '<select id="gc-new-currency" name="goldcrawler_new_currency">'
+            . '<option value="IRR">تومان</option><option value="USD">دلار</option></select>'
+            . '<p class="description">اگر قیمت این نماد در TGJU به ریال نمایش داده می‌شود، «تومان» را انتخاب کنید'
+            . ' (افزونه خودش تقسیم بر ۱۰ روی ریال را انجام می‌دهد تا به تومان تبدیل شود). اگر قیمت اصلی آن دلاری است'
+            . ' (مثلاً انس جهانی طلا/نقره یا رمزارزها)، «دلار» را انتخاب کنید.</p></td></tr>';
+
+        echo '<tr><th scope="row"><label for="gc-new-decimals">تعداد رقم اعشار</label></th><td>'
+            . '<input type="number" id="gc-new-decimals" name="goldcrawler_new_decimals" min="0" max="8" value="0" style="width:80px">'
+            . '<p class="description">برای بیشتر قیمت‌های تومانی مقدار «۰» مناسب است. برای قیمت‌های دلاری معمولاً «۲»،'
+            . ' و برای رمزارزهای کم‌ارزش مثل تتر می‌توانید «۴» بگذارید.</p></td></tr>';
+
+        echo '</tbody></table>';
+
+        echo '<p class="submit"><button type="submit" name="goldcrawler_save_symbols" class="button button-primary">ذخیره نمادها</button></p>';
+        echo '</form>';
+        echo '<script>function goldcrawlerFilterSymbols(q){q=q.toLowerCase();document.querySelectorAll("#goldcrawler-symbol-table tbody tr").forEach(function(r){r.style.display=r.dataset.name.indexOf(q)>-1?"":"none";});}</script>';
     }
 }

@@ -92,14 +92,14 @@ final class GC_Symbols {
         return isset($catalog[$key]) ? $catalog[$key] : null;
     }
 
-    public static function custom($key, $name = null, $currency = self::CURRENCY_IRR) {
+    public static function custom($key, $name = null, $currency = self::CURRENCY_IRR, $group = null, $decimals = null) {
         $key = trim($key);
         return array(
             'key' => $key,
             'name' => $name ? trim($name) : $key,
-            'group' => 'نمادهای دلخواه',
+            'group' => $group ? trim($group) : 'نمادهای دلخواه',
             'currency' => $currency === self::CURRENCY_USD ? self::CURRENCY_USD : self::CURRENCY_IRR,
-            'decimals' => 0,
+            'decimals' => is_numeric($decimals) ? max(0, min(8, (int) $decimals)) : 0,
             'custom' => true,
         );
     }

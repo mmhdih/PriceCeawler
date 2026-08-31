@@ -14,14 +14,30 @@ if (!defined('ABSPATH')) {
 
 final class GC_Crawler {
 
-    /** @return array<string,array> key => symbol dict (catalog + custom_symbols from settings) */
+    /**
+     * @return array<string,array> key => symbol dict: GC_Symbols::catalog()
+     * minus whatever the admin disabled from Settings ← GoldCrawler, plus
+     * custom_symbols from settings (admin-added there, or by any licensed
+     * user from the sidebar's "add custom symbol" box - same shared list).
+     */
     public static function known_symbols() {
-        $symbols = GC_Symbols::catalog();
         $settings = GC_Storage::get_settings();
+        $disabled = array_flip((array) $settings['disabled_symbols']);
+
+        $symbols = array();
+        foreach (GC_Symbols::catalog() as $key => $def) {
+            if (!isset($disabled[$key])) {
+                $symbols[$key] = $def;
+            }
+        }
+
         foreach ((array) $settings['custom_symbols'] as $entry) {
             $key = isset($entry['key']) ? trim((string) $entry['key']) : '';
             if ($key !== '' && !isset($symbols[$key])) {
-                $symbols[$key] = GC_Symbols::custom($key, $entry['name'] ?? null, $entry['currency'] ?? 'IRR');
+                $symbols[$key] = GC_Symbols::custom(
+                    $key, $entry['name'] ?? null, $entry['currency'] ?? 'IRR',
+                    $entry['group'] ?? null, $entry['decimals'] ?? null
+                );
             }
         }
         return $symbols;

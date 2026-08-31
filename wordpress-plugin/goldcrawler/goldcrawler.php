@@ -3,7 +3,7 @@
  * Plugin Name:       GoldCrawler — کراولر قیمت
  * Plugin URI:        https://github.com/mmhdih/PriceCeawler
  * Description:       گزارش روزانه قیمت طلا، سکه، ارز و رمزارز از TGJU با رابط کاربری فارسی. با شورت‌کد [gold_crawler] در هر صفحه یا پست (از جمله صفحات ساخته‌شده با المنتور) قابل استفاده است.
- * Version:           1.0.4
+ * Version:           1.1.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            PriceCeawler contributors
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('GOLDCRAWLER_VERSION', '1.0.4');
+define('GOLDCRAWLER_VERSION', '1.1.0');
 define('GOLDCRAWLER_FILE', __FILE__);
 define('GOLDCRAWLER_DIR', plugin_dir_path(__FILE__));
 define('GOLDCRAWLER_URL', plugin_dir_url(__FILE__));
