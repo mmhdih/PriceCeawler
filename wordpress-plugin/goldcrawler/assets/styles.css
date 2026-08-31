@@ -165,6 +165,10 @@
   overflow-y: visible;
   padding: 4px 16px 16px;
   scrollbar-width: thin;
+  /* grid items default to min-width:auto (= their content's min-content size);
+     without this, the search input's intrinsic minimum width can exceed the
+     fixed --sidebar track width and blow the sidebar out past its own border */
+  min-width: 0;
 }
 
 .goldcrawler-app .content { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
