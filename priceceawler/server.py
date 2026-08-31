@@ -19,6 +19,7 @@ from .fonts import font_css
 from .jalali import JalaliDate
 from .report import to_csv, to_json, to_xlsx
 from .storage import Settings, data_dir
+from .symbols import CATALOG
 from .version import APP_NAME, APP_TITLE_FA, __version__
 
 __all__ = ["AppServer", "create_server"]
@@ -252,6 +253,10 @@ class Handler(BaseHTTPRequestHandler):
                 "dataDir": str(data_dir()),
                 "presets": range_presets(today),
                 "symbols": [s.to_dict() for s in crawler.known_symbols()],
+                # The full built-in list, unaffected by disabled_symbols - the
+                # Settings section needs this to let a disabled symbol be
+                # re-enabled again (it no longer appears in "symbols" above).
+                "catalog": [s.to_dict() for s in CATALOG.values()],
                 "settings": self.server.settings.as_dict(),
                 "archive": crawler.archive.summary(),
             }
@@ -320,10 +325,15 @@ class Handler(BaseHTTPRequestHandler):
         if not key or not re.match(r"^[A-Za-z0-9_.-]{2,64}$", key):
             raise ApiError("شناسه نماد فقط می‌تواند شامل حروف انگلیسی، عدد، «-»، «_» و «.» باشد.")
         name = str(payload.get("name", "")).strip() or key
+        group = str(payload.get("group", "")).strip() or None
         currency = "USD" if str(payload.get("currency", "IRR")).upper() == "USD" else "IRR"
+        try:
+            decimals = max(0, min(8, int(payload.get("decimals", 0) or 0)))
+        except (TypeError, ValueError):
+            decimals = 0
 
         customs = [c for c in (self.server.settings.get("custom_symbols") or []) if c.get("key") != key]
-        customs.append({"key": key, "name": name, "currency": currency})
+        customs.append({"key": key, "name": name, "group": group, "currency": currency, "decimals": decimals})
         self.server.settings.update({"custom_symbols": customs[-50:]})
         self._send_json(
             {"ok": True, "symbols": [s.to_dict() for s in self.server.crawler.known_symbols()]}

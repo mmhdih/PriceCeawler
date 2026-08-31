@@ -39,6 +39,40 @@ class TestResolve(unittest.TestCase):
         self.assertEqual(resolved[0].divisor, 1.0)
 
 
+class TestKnownSymbols(unittest.TestCase):
+    def setUp(self):
+        self.crawler = Crawler(Settings(tempfile.mktemp(suffix=".json")))
+
+    def test_a_disabled_builtin_symbol_is_dropped(self):
+        self.crawler.settings.update({"disabled_symbols": ["geram18"]})
+        keys = {s.key for s in self.crawler.known_symbols()}
+        self.assertNotIn("geram18", keys)
+        self.assertIn("sekee", keys)
+
+    def test_a_custom_symbol_keeps_its_group_and_decimals(self):
+        self.crawler.settings.update(
+            {
+                "custom_symbols": [
+                    {"key": "my_gold", "name": "طلای من", "group": "گروه تستی", "currency": "USD", "decimals": 2}
+                ]
+            }
+        )
+        by_key = {s.key: s for s in self.crawler.known_symbols()}
+        self.assertEqual(by_key["my_gold"].group, "گروه تستی")
+        self.assertEqual(by_key["my_gold"].decimals, 2)
+
+    def test_disabling_then_re_adding_the_same_key_as_custom_overrides_it(self):
+        self.crawler.settings.update(
+            {
+                "disabled_symbols": ["geram18"],
+                "custom_symbols": [{"key": "geram18", "name": "طلای دلخواه من", "currency": "IRR"}],
+            }
+        )
+        by_key = {s.key: s for s in self.crawler.known_symbols()}
+        self.assertEqual(by_key["geram18"].name, "طلای دلخواه من")
+        self.assertTrue(by_key["geram18"].custom)
+
+
 class TestBuild(unittest.TestCase):
     def setUp(self):
         self.crawler = Crawler(Settings(tempfile.mktemp(suffix=".json")))

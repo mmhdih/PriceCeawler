@@ -27,6 +27,9 @@
 
   <div class="topbar__meta">
     <span class="pill" id="todayPill" title="تاریخ امروز">—</span>
+    <button class="icon-btn" id="settingsBtn" type="button" title="تنظیمات" aria-label="تنظیمات">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
     <button class="icon-btn" id="themeBtn" type="button" title="تغییر پوسته" aria-label="تغییر پوسته">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -190,6 +193,72 @@
   <div class="overlay__box">
     <div class="spinner" aria-hidden="true"></div>
     <p id="overlayText">در حال دریافت داده‌ها…</p>
+  </div>
+</div>
+
+<div class="overlay overlay--settings" id="settingsModal" hidden>
+  <div class="overlay__box settings-box" role="dialog" aria-label="تنظیمات">
+    <div class="settings-box__head">
+      <h2>تنظیمات</h2>
+      <button class="icon-btn" id="settingsCloseBtn" type="button" title="بستن" aria-label="بستن">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="settings-box__body">
+
+      <section class="settings-section">
+        <h3>نمادهای پیش‌فرض (کم‌کردن)</h3>
+        <p class="hint">تیک هر نمادی که نمی‌خواهید در فهرست نمادها ببینید را بردارید. نمادهای غیرفعال از فهرست و از دریافت داده‌ها کنار گذاشته می‌شوند؛ هر زمان بخواهید می‌توانید دوباره تیک بزنید و فعالشان کنید. این تغییر بلافاصله ذخیره می‌شود.</p>
+        <input type="search" id="settingsSymbolSearch" placeholder="جست‌وجوی نماد پیش‌فرض…" autocomplete="off">
+        <div class="settings-symbol-table" id="settingsCatalogList"></div>
+      </section>
+
+      <section class="settings-section">
+        <h3>نمادهای دلخواه فعلی</h3>
+        <p class="hint">نمادهایی که خودتان (از همین‌جا یا از بخش «افزودن نماد دلخواه از TGJU» در نوار کناری) اضافه کرده‌اید. برای حذف هرکدام، دکمه «حذف» را بزنید.</p>
+        <div id="settingsCustomList"></div>
+      </section>
+
+      <section class="settings-section">
+        <h3>افزودن نماد دلخواه تازه (زیاد‌کردن)</h3>
+
+        <label class="field">
+          <span>شناسه نماد (Key)</span>
+          <input type="text" id="settingsNewKey" placeholder="مثلاً price_dollar_rl" autocomplete="off" dir="ltr">
+        </label>
+        <p class="hint">این مقدار باید <b>دقیقاً</b> همان بخش انتهایی نشانی صفحه‌ی این نماد در سایت <code>tgju.org</code> باشد. مثلاً برای صفحه‌ی <code>tgju.org/profile/price_dollar_rl</code> مقدار <code>price_dollar_rl</code> را بنویسید. فقط حروف انگلیسی، عدد، «-»، «_» و «.» مجاز است (۲ تا ۶۴ کاراکتر). اگر این شناسه از قبل جزو نمادهای پیش‌فرض <b>فعال</b> در فهرست بالا باشد، این افزودن نادیده گرفته می‌شود؛ یا شناسه دیگری انتخاب کنید یا ابتدا آن نماد پیش‌فرض را از فهرست بالا غیرفعال کنید.</p>
+
+        <label class="field">
+          <span>نام نمایشی</span>
+          <input type="text" id="settingsNewName" placeholder="مثلاً دلار آمریکا" autocomplete="off">
+        </label>
+        <p class="hint">همان نامی که به فارسی در فهرست نمادها، نمودار و گزارش‌های خروجی نمایش داده می‌شود. اگر خالی بگذارید، همان شناسه (Key) به‌جای نام نمایش داده می‌شود.</p>
+
+        <label class="field">
+          <span>گروه</span>
+          <input type="text" id="settingsNewGroup" placeholder="مثلاً ارز، طلا و نقره، یا هر عنوان دلخواه" autocomplete="off">
+        </label>
+        <p class="hint">برای دسته‌بندی و فیلترکردن این نماد در فهرست نمادها استفاده می‌شود؛ هر متنی که بخواهید می‌توانید بنویسید. اگر خالی بگذارید، «نمادهای دلخواه» در نظر گرفته می‌شود.</p>
+
+        <div class="row">
+          <label class="field">
+            <span>واحد پول</span>
+            <select id="settingsNewCurrency">
+              <option value="IRR">تومان</option>
+              <option value="USD">دلار</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>تعداد رقم اعشار</span>
+            <input type="number" id="settingsNewDecimals" min="0" max="8" value="0">
+          </label>
+        </div>
+        <p class="hint">واحد پول: اگر قیمت این نماد در TGJU به ریال نمایش داده می‌شود، «تومان» را انتخاب کنید (برنامه خودش تقسیم بر ۱۰ روی ریال را انجام می‌دهد تا به تومان تبدیل شود)؛ اگر قیمت اصلی آن دلاری است (مثلاً انس جهانی طلا/نقره یا رمزارزها)، «دلار» را انتخاب کنید. تعداد رقم اعشار: برای بیشتر قیمت‌های تومانی «۰» مناسب است، برای قیمت‌های دلاری معمولاً «۲»، و برای رمزارزهای کم‌ارزش مثل تتر می‌توانید «۴» بگذارید.</p>
+
+        <button class="btn btn--primary" id="settingsAddBtn" type="button">افزودن نماد</button>
+      </section>
+
+    </div>
   </div>
 </div>
 

@@ -159,6 +159,28 @@ class ServerTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(any(s["key"] == "my_symbol" for s in payload["symbols"]))
 
+    def test_custom_symbol_keeps_its_group_and_decimals(self):
+        status, payload, _ = self.call(
+            "/api/symbols",
+            {"key": "my_gold", "name": "طلای من", "group": "گروه تستی", "currency": "USD", "decimals": 2},
+        )
+        self.assertEqual(status, 200)
+        added = next(s for s in payload["symbols"] if s["key"] == "my_gold")
+        self.assertEqual(added["group"], "گروه تستی")
+        self.assertEqual(added["decimals"], 2)
+
+    def test_disabling_a_builtin_symbol_removes_it_from_meta_but_not_catalog(self):
+        status, payload, _ = self.call("/api/settings", {"disabled_symbols": ["geram18"]})
+        self.assertEqual(status, 200)
+
+        status, meta, _ = self.call("/api/meta")
+        self.assertEqual(status, 200)
+        self.assertNotIn("geram18", {s["key"] for s in meta["symbols"]})
+        self.assertIn("geram18", {s["key"] for s in meta["catalog"]})
+
+        # leave shared server state as found for the tests that run after this one
+        self.call("/api/settings", {"disabled_symbols": []})
+
     def test_directory_traversal_is_blocked(self):
         status, _, _ = self.call("/assets/../../priceceawler/server.py")
         self.assertEqual(status, 404)

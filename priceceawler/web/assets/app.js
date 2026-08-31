@@ -24,6 +24,7 @@ const state = {
   chartMode: 'percent',
   hidden: new Set(),
   busy: false,
+  settingsQuery: '',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -718,6 +719,143 @@ async function addCustomSymbol() {
   }
 }
 
+/* ── تنظیمات (مدیریت نمادها) ───────────────────────────── */
+async function refreshMetaSymbols() {
+  try {
+    const meta = await api('api/meta');
+    state.meta = meta;
+    state.symbols = meta.symbols;
+    renderGroupFilters();
+    renderSymbolList();
+    updateSymbolCount();
+    if (!$('settingsModal').hidden) renderSettingsModal();
+  } catch (error) {
+    toast(error.message, 'error', 8000);
+  }
+}
+
+function renderSettingsModal() {
+  const meta = state.meta;
+  if (!meta) return;
+  const settings = meta.settings || {};
+  const disabled = new Set(settings.disabled_symbols || []);
+  const customs = settings.custom_symbols || [];
+
+  // -- نمادهای پیش‌فرض ----------------------------------------------------
+  const query = state.settingsQuery.trim().toLowerCase();
+  const catalogBox = $('settingsCatalogList');
+  catalogBox.replaceChildren();
+  const catalog = (meta.catalog || []).filter(
+    (s) => !query || s.name.toLowerCase().includes(query) || s.key.toLowerCase().includes(query),
+  );
+  if (!catalog.length) {
+    catalogBox.appendChild(el('div', 'settings-custom-empty', 'نمادی با این نام پیدا نشد.'));
+  } else {
+    let lastGroup = null;
+    catalog.forEach((symbol) => {
+      if (symbol.group !== lastGroup) {
+        lastGroup = symbol.group;
+        catalogBox.appendChild(el('div', 'settings-symbol-group', symbol.group));
+      }
+      const row = el('label', 'settings-symbol-row');
+      const checkbox = el('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !disabled.has(symbol.key);
+      checkbox.onchange = () => toggleBuiltinSymbol(symbol.key, checkbox.checked);
+      const name = el('span', 'name');
+      name.appendChild(document.createTextNode(symbol.name + ' '));
+      name.appendChild(el('span', 'key', symbol.key));
+      row.append(checkbox, name);
+      catalogBox.appendChild(row);
+    });
+  }
+
+  // -- نمادهای دلخواه فعلی ------------------------------------------------
+  const customBox = $('settingsCustomList');
+  customBox.replaceChildren();
+  if (!customs.length) {
+    customBox.appendChild(
+      el('div', 'settings-custom-empty', 'هنوز هیچ نماد دلخواهی اضافه نکرده‌اید.'),
+    );
+  } else {
+    customs.forEach((entry) => {
+      const row = el('div', 'settings-custom-row');
+      const label = el('span');
+      label.appendChild(document.createTextNode((entry.name || entry.key) + ' '));
+      label.appendChild(el('span', 'key', entry.key));
+      const removeBtn = el('button', 'btn btn--ghost', 'حذف');
+      removeBtn.type = 'button';
+      removeBtn.onclick = () => removeCustomSymbol(entry.key);
+      row.append(label, removeBtn);
+      customBox.appendChild(row);
+    });
+  }
+}
+
+async function toggleBuiltinSymbol(key, enabled) {
+  const settings = (state.meta && state.meta.settings) || {};
+  const current = new Set(settings.disabled_symbols || []);
+  if (enabled) current.delete(key);
+  else current.add(key);
+  try {
+    await api('api/settings', { method: 'POST', body: { disabled_symbols: [...current] } });
+    await refreshMetaSymbols();
+  } catch (error) {
+    toast(error.message, 'error', 8000);
+  }
+}
+
+async function removeCustomSymbol(key) {
+  const settings = (state.meta && state.meta.settings) || {};
+  const remaining = (settings.custom_symbols || []).filter((c) => c.key !== key);
+  try {
+    await api('api/settings', { method: 'POST', body: { custom_symbols: remaining } });
+    state.selected.delete(key);
+    await refreshMetaSymbols();
+    toast('نماد دلخواه حذف شد.', 'ok', 3000);
+  } catch (error) {
+    toast(error.message, 'error', 8000);
+  }
+}
+
+async function addSettingsSymbol() {
+  const key = $('settingsNewKey').value.trim();
+  if (!key) {
+    toast('شناسه نماد را وارد کنید.', 'warn');
+    return;
+  }
+  try {
+    await api('api/symbols', {
+      method: 'POST',
+      body: {
+        key,
+        name: $('settingsNewName').value.trim(),
+        group: $('settingsNewGroup').value.trim(),
+        currency: $('settingsNewCurrency').value,
+        decimals: Number($('settingsNewDecimals').value) || 0,
+      },
+    });
+    $('settingsNewKey').value = '';
+    $('settingsNewName').value = '';
+    $('settingsNewGroup').value = '';
+    $('settingsNewCurrency').value = 'IRR';
+    $('settingsNewDecimals').value = '0';
+    await refreshMetaSymbols();
+    toast('نماد دلخواه اضافه شد.', 'ok', 3500);
+  } catch (error) {
+    toast(error.message, 'error', 8000);
+  }
+}
+
+function openSettings() {
+  renderSettingsModal();
+  $('settingsModal').hidden = false;
+}
+
+function closeSettings() {
+  $('settingsModal').hidden = true;
+}
+
 /* ── راه‌اندازی ────────────────────────────────────────── */
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -784,6 +922,17 @@ async function init() {
     persistSettings();
     if (state.result) renderChart();
   };
+
+  $('settingsBtn').onclick = openSettings;
+  $('settingsCloseBtn').onclick = closeSettings;
+  $('settingsModal').addEventListener('click', (event) => {
+    if (event.target.id === 'settingsModal') closeSettings();
+  });
+  $('settingsSymbolSearch').addEventListener('input', (event) => {
+    state.settingsQuery = event.target.value;
+    renderSettingsModal();
+  });
+  $('settingsAddBtn').onclick = addSettingsSymbol;
 
   window.addEventListener('resize', () => {
     if (state.result) renderChart();

@@ -48,15 +48,22 @@ class Crawler:
 
     # -- symbols ---------------------------------------------------------
     def known_symbols(self) -> list[Symbol]:
-        """Built-in catalogue plus any custom symbols the user has added."""
-        symbols = list(CATALOG.values())
+        """Built-in catalogue (minus anything disabled from Settings) plus any
+        custom symbols the user has added there."""
+        disabled = set(self.settings.get("disabled_symbols", []) or [])
+        symbols = [s for s in CATALOG.values() if s.key not in disabled]
+        known_keys = {s.key for s in symbols}
         for entry in self.settings.get("custom_symbols", []) or []:
             try:
                 key = str(entry.get("key", "")).strip()
-                if key and key not in CATALOG:
+                if key and key not in known_keys:
                     symbols.append(
-                        custom_symbol(key, entry.get("name"), entry.get("currency", "IRR"))
+                        custom_symbol(
+                            key, entry.get("name"), entry.get("currency", "IRR"),
+                            entry.get("group"), entry.get("decimals"),
+                        )
                     )
+                    known_keys.add(key)
             except (AttributeError, ValueError):
                 continue
         return symbols

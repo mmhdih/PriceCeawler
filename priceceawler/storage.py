@@ -109,7 +109,8 @@ def get_or_create_secret(name: str) -> str:
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "symbols": list(DEFAULT_SELECTION),
-    "custom_symbols": [],        # [{"key": ..., "name": ..., "currency": ...}]
+    "custom_symbols": [],        # [{"key": ..., "name": ..., "group": ..., "currency": ..., "decimals": ...}]
+    "disabled_symbols": [],      # built-in CATALOG keys the user turned off
     "range_preset": "30",
     "start": "",
     "end": "",

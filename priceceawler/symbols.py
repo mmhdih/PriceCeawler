@@ -94,12 +94,25 @@ GROUPS: tuple[str, ...] = tuple(dict.fromkeys(s.group for s in _DEFS))
 DEFAULT_SELECTION: tuple[str, ...] = ("geram18", "sekee", "price_dollar_rl")
 
 
-def custom_symbol(key: str, name: str | None = None, currency: str = IRR) -> Symbol:
+def custom_symbol(
+    key: str,
+    name: str | None = None,
+    currency: str = IRR,
+    group: str | None = None,
+    decimals: int | None = None,
+) -> Symbol:
     """Build a Symbol for a TGJU key that is not in the built-in catalogue."""
     key = key.strip()
     if not key:
         raise ValueError("شناسه نماد نمی‌تواند خالی باشد.")
-    return Symbol(key, (name or key).strip(), "نمادهای دلخواه", currency=currency, custom=True)
+    return Symbol(
+        key,
+        (name or key).strip(),
+        (group or "نمادهای دلخواه").strip() or "نمادهای دلخواه",
+        currency=currency,
+        decimals=max(0, min(8, int(decimals))) if decimals is not None else 0,
+        custom=True,
+    )
 
 
 def get_symbol(key: str) -> Symbol | None:
