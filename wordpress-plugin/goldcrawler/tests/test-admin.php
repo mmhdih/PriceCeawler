@@ -56,6 +56,39 @@ $html = ob_get_clean();
 gc_check(GC_License::is_licensed(2), 'a forged/expired nonce does not change existing grants');
 gc_check(strpos($html, 'notice-error') !== false, 'a bad nonce shows an error notice');
 
+// -- allow-all toggle ---------------------------------------------------
+$GLOBALS['gc_test_current_user_can'] = true;
+ob_start();
+GC_Admin::render_page();
+$html = ob_get_clean();
+gc_check(strpos($html, 'goldcrawler_allow_all') !== false, 'the page renders the allow-all-users checkbox');
+
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_POST = array(
+    'goldcrawler_save' => '1',
+    'goldcrawler_nonce' => wp_create_nonce(GC_Admin::NONCE_ACTION),
+    'goldcrawler_allow_all' => '1',
+    // disabled checkboxes never submit, so the real form sends no
+    // goldcrawler_users at all while allow-all is checked
+);
+ob_start();
+GC_Admin::render_page();
+ob_end_clean();
+gc_check(GC_License::allow_all_enabled() === true, 'checking allow-all turns it on');
+gc_check(GC_License::is_licensed(2), 'turning on allow-all does not wipe the existing per-user allowlist');
+
+$_POST = array(
+    'goldcrawler_save' => '1',
+    'goldcrawler_nonce' => wp_create_nonce(GC_Admin::NONCE_ACTION),
+    'goldcrawler_users' => array('3'),
+    // allow_all checkbox omitted == unchecked
+);
+ob_start();
+GC_Admin::render_page();
+ob_end_clean();
+gc_check(GC_License::allow_all_enabled() === false, 'unchecking allow-all turns it back off');
+gc_check(GC_License::is_licensed(3) && !GC_License::is_licensed(2), 'once allow-all is off, the submitted per-user list is saved normally again');
+
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_POST = array();
 

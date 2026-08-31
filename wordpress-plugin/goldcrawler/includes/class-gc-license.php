@@ -16,7 +16,18 @@ if (!defined('ABSPATH')) {
 final class GC_License {
 
     const OPTION = 'goldcrawler_licensed_users';
+    const OPTION_ALLOW_ALL = 'goldcrawler_allow_all_users';
     const MANAGE_CAPABILITY = 'manage_options'; // who may grant/revoke licenses
+
+    /** Site-wide override: when on, every logged-in user is allowed, regardless of the allowlist. */
+    public static function allow_all_enabled() {
+        return (bool) get_option(self::OPTION_ALLOW_ALL, false);
+    }
+
+    public static function set_allow_all($enabled) {
+        update_option(self::OPTION_ALLOW_ALL, (bool) $enabled);
+        return (bool) $enabled;
+    }
 
     /** @return int[] */
     public static function licensed_user_ids() {
@@ -53,13 +64,17 @@ final class GC_License {
      * The single access check used by both the shortcode and the AJAX
      * handlers: an Administrator always has access (so the site owner can
      * never lock themselves out); anyone else needs to be logged in AND
-     * explicitly licensed.
+     * either covered by the site-wide "allow all logged-in users" toggle
+     * or explicitly licensed.
      */
     public static function current_user_allowed() {
         if (!is_user_logged_in()) {
             return false;
         }
         if (current_user_can(self::MANAGE_CAPABILITY)) {
+            return true;
+        }
+        if (self::allow_all_enabled()) {
             return true;
         }
         return self::is_licensed(get_current_user_id());
