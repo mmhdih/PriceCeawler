@@ -49,7 +49,11 @@
   --shadow-md: 0 10px 30px rgba(0, 0, 0, .45);
 }
 
-.goldcrawler-app, .goldcrawler-app * { box-sizing: border-box; }
+/* !important: the live site's theme sets its own box-sizing on form elements
+   (input[type=search]{box-sizing:content-box} at the same specificity as a bare
+   .goldcrawler-app * rule), which wins cascade ties by load order and silently
+   breaks every width:100% calculation in this file that assumes border-box. */
+.goldcrawler-app, .goldcrawler-app * { box-sizing: border-box !important; }
 
 /* class rules such as .overlay{display:grid} would otherwise beat the UA [hidden] rule */
 .goldcrawler-app [hidden] { display: none !important; }
@@ -200,6 +204,13 @@
      makes it behave like a normal text input we can size ourselves. */
   -webkit-appearance: none;
   appearance: none;
+  /* the live site's active theme carries its own box-sizing:content-box rule for
+     input[type=search], at the same specificity as the universal border-box reset
+     above; on a tie the later-loaded stylesheet (the theme's) wins the cascade, so
+     content-box was winning here - width:100% + padding then rendered wider than
+     the container. !important forces ours to win regardless of load order, since
+     this is exactly the box model our width/padding math assumes. */
+  box-sizing: border-box !important;
   width: 100%;
   max-width: 100%;
   padding: 9px 12px;
