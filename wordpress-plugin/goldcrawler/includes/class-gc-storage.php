@@ -22,7 +22,11 @@ final class GC_Storage {
         'start' => '',
         'end' => '',
         'fill_gaps' => true,
-        'auto_crawl' => true,
+        // Off by default: no unattended background fetching unless the site
+        // owner explicitly opts in from the sidebar toggle. Every "دریافت
+        // داده‌ها" / export click already fetches live data on its own, so
+        // this only controls the *unattended, once-a-day* WP-Cron crawl.
+        'auto_crawl' => false,
         'theme' => 'light',
         'last_crawl' => '',
     );

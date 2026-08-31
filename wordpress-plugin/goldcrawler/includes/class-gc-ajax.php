@@ -2,13 +2,13 @@
 /**
  * wp_ajax_* handlers behind admin-ajax.php.
  *
- * Every action here requires BOTH a logged-in user holding the plugin's
- * capability AND a valid nonce. CAPABILITY is 'read', which every logged-in
- * WordPress account holds regardless of role (Subscriber and up) - so this
- * is "any signed-in user", not "admins only". No wp_ajax_nopriv_* handlers
- * are registered at all, so a logged-out visitor gets WordPress's normal
- * silent "0" response with no code of ours ever running - only accounts,
- * never anonymous visitors, can reach this.
+ * Every action here requires BOTH a user GC_License::current_user_allowed()
+ * approves (an Administrator, or a user the site owner explicitly granted a
+ * "license" to from Settings → GoldCrawler) AND a valid nonce. No
+ * wp_ajax_nopriv_* handlers are registered at all, so a logged-out visitor
+ * gets WordPress's normal silent "0" response with no code of ours ever
+ * running. All licensed users share one set of settings/selection/archive -
+ * this is one shared internal tool, not a per-user workspace.
  */
 
 if (!defined('ABSPATH')) {
@@ -25,7 +25,6 @@ class GC_Api_Exception extends Exception {
 
 final class GC_Ajax {
 
-    const CAPABILITY = 'read';
     const NONCE_ACTION = 'goldcrawler_ajax';
 
     /**
@@ -43,7 +42,7 @@ final class GC_Ajax {
     }
 
     public static function can_use() {
-        return current_user_can(self::CAPABILITY);
+        return GC_License::current_user_allowed();
     }
 
     private static function guard() {

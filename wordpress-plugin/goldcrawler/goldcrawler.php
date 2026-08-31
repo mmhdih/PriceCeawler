@@ -27,6 +27,8 @@ require_once GOLDCRAWLER_DIR . 'includes/class-gc-report.php';
 require_once GOLDCRAWLER_DIR . 'includes/class-gc-xlsx.php';
 require_once GOLDCRAWLER_DIR . 'includes/class-gc-storage.php';
 require_once GOLDCRAWLER_DIR . 'includes/class-gc-crawler.php';
+require_once GOLDCRAWLER_DIR . 'includes/class-gc-license.php';
+require_once GOLDCRAWLER_DIR . 'includes/class-gc-admin.php';
 require_once GOLDCRAWLER_DIR . 'includes/class-gc-ajax.php';
 require_once GOLDCRAWLER_DIR . 'includes/class-gc-shortcode.php';
 require_once GOLDCRAWLER_DIR . 'includes/class-gc-cron.php';
@@ -39,3 +41,7 @@ add_action('init', function () {
     GC_Shortcode::register();
     GC_Cron::register();
 });
+
+if (is_admin()) {
+    GC_Admin::register();
+}

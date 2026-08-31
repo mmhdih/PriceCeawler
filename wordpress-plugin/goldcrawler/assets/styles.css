@@ -57,6 +57,14 @@
 
 
 .goldcrawler-app {
+  /* Page builders (Elementor included) often wrap shortcode output in a
+     flex/grid container of their own to stretch widgets to fill a column;
+     without this, an ancestor's flex sizing can squeeze or misplace our
+     internal grid/search boxes unpredictably depending on the builder. */
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  flex: none;
   background: var(--bg);
   color: var(--ink);
   font-family: "Vazirmatn", "Segoe UI", Tahoma, sans-serif;
@@ -174,7 +182,7 @@
   font-size: 11.5px; font-weight: 600; text-align: center;
 }
 
-.goldcrawler-app .search { position: relative; margin-bottom: 10px; }
+.goldcrawler-app .search { position: relative; width: 100%; max-width: 100%; margin-bottom: 10px; }
 .goldcrawler-app .search svg {
   position: absolute; inset-inline-start: 11px; top: 50%; transform: translateY(-50%);
   width: 15px; height: 15px; color: var(--muted); pointer-events: none;

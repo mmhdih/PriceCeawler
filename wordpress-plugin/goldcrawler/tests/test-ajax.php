@@ -11,6 +11,7 @@ require __DIR__ . '/../includes/class-gc-report.php';
 require __DIR__ . '/../includes/class-gc-storage.php';
 require __DIR__ . '/../includes/class-gc-crawler.php';
 require __DIR__ . '/../includes/class-gc-xlsx.php';
+require __DIR__ . '/../includes/class-gc-license.php';
 require __DIR__ . '/../includes/class-gc-ajax.php';
 
 $failures = 0; $checks = 0;
@@ -56,14 +57,20 @@ $meta = $resp['data']['data'];
 gc_check(count($meta['symbols']) === 32, 'meta lists the full built-in catalog');
 gc_check(count($meta['presets']) === 7, 'meta includes all 7 range presets');
 
-// -- meta: CAPABILITY = 'read' means every logged-in role, not just admins --
+// -- meta: access follows GC_License, not a blanket "any logged-in user" ----
 $GLOBALS['gc_test_user_role'] = 'administrator';
 list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));
-gc_check($resp['data']['success'] === true, 'an Administrator can use the tool');
+gc_check($resp['data']['success'] === true, 'an Administrator can always use the tool');
 
 $GLOBALS['gc_test_user_role'] = 'subscriber';
+$GLOBALS['gc_test_current_user_id'] = 999; // not licensed
 list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));
-gc_check($resp['data']['success'] === true, 'a plain Subscriber (any logged-in user) can use the tool, not just admins');
+gc_check($resp['status'] === 403, 'a plain Subscriber with no license is refused');
+
+GC_License::grant(999);
+list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));
+gc_check($resp['data']['success'] === true, 'a Subscriber the admin explicitly licensed can use the tool');
+GC_License::revoke(999);
 
 $GLOBALS['gc_test_user_role'] = 'logged_out';
 list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));

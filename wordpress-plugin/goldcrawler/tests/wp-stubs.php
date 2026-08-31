@@ -16,6 +16,9 @@ $GLOBALS['gc_test_remote_get_responses'] = array(); // url => callable|array
 $GLOBALS['gc_test_cron_scheduled'] = array();
 $GLOBALS['gc_test_current_user_can'] = true; // legacy blanket override: true=any capability granted, false=none
 $GLOBALS['gc_test_user_role'] = null; // set to 'logged_out'|'subscriber'|'administrator' for granular per-capability checks
+$GLOBALS['gc_test_current_user_id'] = 42;
+$GLOBALS['gc_test_is_admin'] = false; // simulates being inside wp-admin (for is_admin())
+$GLOBALS['gc_test_users'] = array(); // populated by tests via gc_test_add_user()
 $GLOBALS['gc_test_last_json'] = null; // captured wp_send_json_* payload
 
 function wp_upload_dir() {
@@ -73,6 +76,50 @@ function current_user_can($capability) {
         if ($role === 'administrator') return true;
     }
     return $GLOBALS['gc_test_current_user_can'];
+}
+
+function is_user_logged_in() {
+    if ($GLOBALS['gc_test_user_role'] !== null) {
+        return $GLOBALS['gc_test_user_role'] !== 'logged_out';
+    }
+    return true;
+}
+
+function get_current_user_id() {
+    return is_user_logged_in() ? $GLOBALS['gc_test_current_user_id'] : 0;
+}
+
+function get_option($name, $default = false) {
+    return array_key_exists($name, $GLOBALS['gc_test_options']) ? $GLOBALS['gc_test_options'][$name] : $default;
+}
+
+function update_option($name, $value) {
+    $GLOBALS['gc_test_options'][$name] = $value;
+    return true;
+}
+
+/** Test helper: register a fake WP_User-like object for get_users(). */
+function gc_test_add_user($id, $display_name, $login, $email, $roles = array('subscriber')) {
+    $GLOBALS['gc_test_users'][] = (object) array(
+        'ID' => $id, 'display_name' => $display_name, 'user_login' => $login,
+        'user_email' => $email, 'roles' => $roles,
+    );
+}
+
+function get_users($args = array()) { return $GLOBALS['gc_test_users']; }
+
+function is_admin() { return $GLOBALS['gc_test_is_admin']; }
+
+function add_options_page(...$args) { $GLOBALS['gc_test_actions']['options_pages'][] = $args; }
+
+function wp_nonce_field($action, $name = '_wpnonce', $referer = true, $echo = true) {
+    $field = '<input type="hidden" name="' . $name . '" value="' . wp_create_nonce($action) . '">';
+    if ($echo) { echo $field; }
+    return $field;
+}
+
+function wp_die($message = '') {
+    throw new RuntimeException('wp_die: ' . (is_string($message) ? $message : 'died'));
 }
 
 function wp_create_nonce($action) { return 'test-nonce-' . md5($action); }

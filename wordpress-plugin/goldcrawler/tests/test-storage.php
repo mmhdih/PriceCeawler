@@ -14,7 +14,7 @@ function gc_check($cond, $label) {
 // -- settings ---------------------------------------------------------
 $settings = GC_Storage::get_settings();
 gc_check(in_array('geram18', $settings['symbols'], true), 'default settings include geram18');
-gc_check($settings['auto_crawl'] === true, 'default auto_crawl is true');
+gc_check($settings['auto_crawl'] === false, 'default auto_crawl is off (no unattended daily fetching unless opted in)');
 
 $updated = GC_Storage::update_settings(array('theme' => 'dark', 'unknown_key' => 'x'));
 gc_check($updated['theme'] === 'dark', 'settings update persists known keys');

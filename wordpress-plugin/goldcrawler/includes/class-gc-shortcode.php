@@ -1,9 +1,9 @@
 <?php
 /**
  * The [gold_crawler] shortcode: renders the dashboard and enqueues its
- * assets. Gated behind the same capability as the AJAX endpoints, so a
- * logged-out or non-admin visitor sees a polite notice instead of a UI
- * shell whose buttons would all silently fail.
+ * assets. Gated behind the same GC_License check as the AJAX endpoints, so
+ * a visitor without access sees a polite notice instead of a UI shell whose
+ * buttons would all silently fail.
  */
 
 if (!defined('ABSPATH')) {
@@ -19,8 +19,12 @@ final class GC_Shortcode {
     }
 
     public static function render($atts = array()) {
-        if (!current_user_can(GC_Ajax::CAPABILITY)) {
+        if (GC_License::current_user_allowed()) {
+            // fall through to the real app below
+        } elseif (!is_user_logged_in()) {
             return '<p class="goldcrawler-locked">برای مشاهده این ابزار باید وارد حساب کاربری خود در سایت شوید.</p>';
+        } else {
+            return '<p class="goldcrawler-locked">شما مجوز استفاده از این ابزار را ندارید. برای دریافت دسترسی با مدیر سایت تماس بگیرید.</p>';
         }
 
         self::enqueue_assets();

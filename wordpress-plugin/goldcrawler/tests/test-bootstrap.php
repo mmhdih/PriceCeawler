@@ -7,6 +7,7 @@
 
 require __DIR__ . '/wp-stubs.php';
 define('GC_STANDALONE_TEST', true);
+$GLOBALS['gc_test_is_admin'] = true; // simulate a wp-admin page load, like the real access-settings page
 
 require dirname(__DIR__) . '/goldcrawler.php';
 do_action('init'); // the plugin registers everything from here
@@ -36,33 +37,39 @@ GC_Storage::update_settings(array('symbols' => array('geram18'), 'auto_crawl' =>
 do_action(GC_Cron::HOOK);
 gc_check(count(GC_Storage::load_archive('geram18')) > 0, 'the cron hook performed a real crawl into the archive');
 
-// -- shortcode is registered and gated by capability -----------------------
+// -- shortcode is registered and gated by GC_License, not a blanket rule ---
 gc_check(isset($GLOBALS['gc_test_actions']['shortcode_gold_crawler']), '[gold_crawler] shortcode is registered');
-
-$GLOBALS['gc_test_current_user_can'] = false;
-$locked_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
-gc_check(strpos($locked_html, 'وارد حساب کاربری') !== false, 'logged-out visitors see a locked message, not the app shell');
-
-$GLOBALS['gc_test_current_user_can'] = true;
-$app_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
-gc_check(strpos($app_html, 'id="goldcrawler-app"') !== false, 'a signed-in user sees the real app container');
-
-// CAPABILITY = 'read' means any logged-in role, not just Administrator.
-$GLOBALS['gc_test_user_role'] = 'subscriber';
-$subscriber_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
-gc_check(strpos($subscriber_html, 'id="goldcrawler-app"') !== false, 'a plain Subscriber sees the real app container too');
 
 $GLOBALS['gc_test_user_role'] = 'logged_out';
 $anon_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
-gc_check(strpos($anon_html, 'وارد حساب کاربری') !== false, 'an anonymous visitor is still locked out');
-$GLOBALS['gc_test_user_role'] = null;
+gc_check(strpos($anon_html, 'وارد حساب کاربری') !== false, 'a logged-out visitor is told to sign in');
+
+$GLOBALS['gc_test_user_role'] = 'subscriber';
+$GLOBALS['gc_test_current_user_id'] = 4242; // not licensed
+$unlicensed_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
+gc_check(strpos($unlicensed_html, 'مجوز استفاده از این ابزار') !== false, 'a signed-in but unlicensed user is told to contact the admin, not asked to log in again');
+
+GC_License::grant(4242);
+$app_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
+gc_check(strpos($app_html, 'id="goldcrawler-app"') !== false, 'a licensed Subscriber sees the real app container');
 gc_check(strpos($app_html, 'class="goldcrawler-app"') !== false, 'the app root carries its scoping class');
+GC_License::revoke(4242);
+
+$GLOBALS['gc_test_user_role'] = 'administrator';
+$admin_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
+gc_check(strpos($admin_html, 'id="goldcrawler-app"') !== false, 'an Administrator sees the app without needing an explicit grant');
+$GLOBALS['gc_test_user_role'] = null;
 
 // -- AJAX actions are registered under the expected hook names --------------
 foreach (array('meta', 'archive', 'series', 'export', 'settings', 'symbols', 'crawl') as $action) {
     gc_check(isset($GLOBALS['gc_test_actions']["wp_ajax_goldcrawler_{$action}"]), "wp_ajax_goldcrawler_{$action} is registered");
 }
 gc_check(!isset($GLOBALS['gc_test_actions']['wp_ajax_nopriv_goldcrawler_meta']), 'no nopriv handler exists (logged-out visitors get nothing)');
+
+// -- the access-settings admin page is wired up on a real wp-admin load ----
+gc_check(isset($GLOBALS['gc_test_actions']['admin_menu']), 'GC_Admin registers on admin_menu when is_admin() is true');
+foreach ($GLOBALS['gc_test_actions']['admin_menu'] as $cb) { call_user_func($cb); }
+gc_check(!empty($GLOBALS['gc_test_actions']['options_pages']), 'the GoldCrawler settings page is actually added under Settings');
 
 echo "checks: {$checks}, failures: {$failures}\n";
 exit($failures > 0 ? 1 : 0);
