@@ -1,0 +1,500 @@
+/* ============================================================
+   کراولر قیمت — طرح رابط کاربری
+   ============================================================ */
+
+.goldcrawler-app {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --ink: #16202e;
+  --ink-soft: #46536a;
+  --muted: #78859a;
+  --border: #e3e8f0;
+  --border-strong: #cfd7e4;
+  --primary: #1f3a5f;
+  --primary-ink: #ffffff;
+  --primary-soft: #eaf0f9;
+  --accent: #b8862b;
+  --accent-soft: #fbf3e2;
+  --up: #0f8a52;
+  --up-soft: #e7f6ee;
+  --down: #d13c3c;
+  --down-soft: #fdecec;
+  --shadow-sm: 0 1px 2px rgba(16, 26, 43, .06), 0 1px 3px rgba(16, 26, 43, .04);
+  --shadow-md: 0 6px 24px rgba(16, 26, 43, .08);
+  --radius: 14px;
+  --radius-sm: 10px;
+  --sidebar: 340px;
+}
+
+.goldcrawler-app[data-theme="dark"] {
+  --bg: #0d1219;
+  --surface: #151d29;
+  --surface-2: #1b2533;
+  --ink: #e8eef7;
+  --ink-soft: #b9c5d6;
+  --muted: #8494aa;
+  --border: #24303f;
+  --border-strong: #33415a;
+  --primary: #4d86cf;
+  --primary-ink: #08111c;
+  --primary-soft: #1a2637;
+  --accent: #e0b055;
+  --accent-soft: #2a2318;
+  --up: #35c07d;
+  --up-soft: #14291f;
+  --down: #f0706e;
+  --down-soft: #2c1a1c;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, .45);
+}
+
+.goldcrawler-app, .goldcrawler-app * { box-sizing: border-box; }
+
+/* class rules such as .overlay{display:grid} would otherwise beat the UA [hidden] rule */
+.goldcrawler-app [hidden] { display: none !important; }
+
+
+
+.goldcrawler-app {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Vazirmatn", "Segoe UI", Tahoma, sans-serif;
+  font-size: 14px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+
+.goldcrawler-app h1, .goldcrawler-app h2, .goldcrawler-app h3 { margin: 0; font-weight: 600; line-height: 1.5; }
+.goldcrawler-app p { margin: 0; }
+.goldcrawler-app code { font-family: ui-monospace, "Cascadia Code", monospace; font-size: .85em; direction: ltr; unicode-bidi: embed; }
+.goldcrawler-app :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 6px; }
+
+/* ── نوار بالا ─────────────────────────────────────────── */
+.goldcrawler-app .topbar {
+  /* not sticky here: above this widget sits an arbitrary WordPress theme
+     header of unknown height, so pinning to the viewport could overlap it */
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 22px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.goldcrawler-app .brand { display: flex; align-items: center; gap: 12px; }
+
+.goldcrawler-app .brand__mark {
+  display: grid;
+  place-items: center;
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--accent) 60%, var(--primary)));
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+.goldcrawler-app .brand__mark svg { width: 21px; height: 21px; }
+.goldcrawler-app .brand__text { display: flex; flex-direction: column; line-height: 1.35; }
+.goldcrawler-app .brand__text strong { font-size: 15px; font-weight: 700; }
+.goldcrawler-app .brand__text small { font-size: 11.5px; color: var(--muted); }
+
+.goldcrawler-app .topbar__meta { display: flex; align-items: center; gap: 8px; }
+
+.goldcrawler-app .pill {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.goldcrawler-app[data-theme="dark"] .pill { color: var(--ink-soft); }
+.goldcrawler-app .pill--ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); direction: ltr; }
+
+.goldcrawler-app .icon-btn {
+  display: grid; place-items: center;
+  width: 34px; height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.goldcrawler-app .icon-btn:hover { background: var(--surface-2); color: var(--ink); border-color: var(--border-strong); }
+.goldcrawler-app .icon-btn svg { width: 17px; height: 17px; }
+.goldcrawler-app .icon-moon { display: none; }
+.goldcrawler-app[data-theme="dark"] .icon-sun { display: none; }
+.goldcrawler-app[data-theme="dark"] .icon-moon { display: block; }
+
+/* ── چیدمان ─────────────────────────────────────────────── */
+.goldcrawler-app .layout {
+  display: grid;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  gap: 18px;
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 18px 22px 40px;
+  align-items: start;
+}
+
+.goldcrawler-app .panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.goldcrawler-app .sidebar {
+  /* same reasoning as .topbar above: no reliable viewport offset to pin to
+     inside an arbitrary WordPress page, so this scrolls with the page */
+  position: relative;
+  overflow-y: visible;
+  padding: 4px 16px 16px;
+  scrollbar-width: thin;
+}
+
+.goldcrawler-app .content { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+/* ── بلوک‌های پنل کناری ─────────────────────────────────── */
+.goldcrawler-app .block { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.goldcrawler-app .block:last-of-type { border-bottom: 0; }
+.goldcrawler-app .block__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.goldcrawler-app .block__head h2 { font-size: 13px; font-weight: 600; color: var(--ink-soft); letter-spacing: .2px; }
+
+.goldcrawler-app .counter {
+  min-width: 24px; padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--primary); color: var(--primary-ink);
+  font-size: 11.5px; font-weight: 600; text-align: center;
+}
+
+.goldcrawler-app .search { position: relative; margin-bottom: 10px; }
+.goldcrawler-app .search svg {
+  position: absolute; inset-inline-start: 11px; top: 50%; transform: translateY(-50%);
+  width: 15px; height: 15px; color: var(--muted); pointer-events: none;
+}
+
+
+.goldcrawler-app input[type="text"], .goldcrawler-app input[type="search"], .goldcrawler-app select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.goldcrawler-app input::placeholder { color: var(--muted); opacity: .85; }
+.goldcrawler-app input:focus, .goldcrawler-app select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent);
+}
+.goldcrawler-app input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
+.goldcrawler-app .search input[type="search"] { padding-inline-start: 36px; }
+
+/* ── چیپ‌ها ─────────────────────────────────────────────── */
+.goldcrawler-app .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.goldcrawler-app .chips--filters { margin-bottom: 10px; }
+.goldcrawler-app .chips--compact .chip { padding: 4px 11px; font-size: 12px; }
+
+.goldcrawler-app .chip {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.goldcrawler-app .chip:hover { border-color: var(--border-strong); color: var(--ink); }
+.goldcrawler-app .chip[aria-selected="true"], .goldcrawler-app .chip.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-ink);
+  font-weight: 500;
+}
+
+/* ── فهرست نمادها ───────────────────────────────────────── */
+.goldcrawler-app .symbol-list {
+  max-height: 290px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-inline-end: 4px;
+  scrollbar-width: thin;
+}
+.goldcrawler-app .symbol-group {
+  padding: 10px 4px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.goldcrawler-app .symbol {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background .12s;
+}
+.goldcrawler-app .symbol:hover { background: var(--surface-2); }
+.goldcrawler-app .symbol input { accent-color: var(--primary); width: 15px; height: 15px; cursor: pointer; flex: none; }
+.goldcrawler-app .symbol__name { flex: 1; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goldcrawler-app .symbol__key { font-size: 10.5px; color: var(--muted); direction: ltr; }
+.goldcrawler-app .symbol.is-on { background: var(--primary-soft); }
+.goldcrawler-app .symbol__unit {
+  font-size: 10px; padding: 1px 7px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); flex: none;
+}
+.goldcrawler-app .symbol-list__empty { padding: 18px 8px; text-align: center; color: var(--muted); font-size: 12.5px; }
+
+.goldcrawler-app .custom-symbol { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.goldcrawler-app .custom-symbol summary { cursor: pointer; font-size: 12.5px; color: var(--primary); font-weight: 500; }
+.goldcrawler-app[data-theme="dark"] .custom-symbol summary { color: var(--accent); }
+.goldcrawler-app .custom-symbol__body { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
+.goldcrawler-app .custom-symbol .row { display: flex; gap: 8px; }
+.goldcrawler-app .custom-symbol .row select { flex: 1; }
+.goldcrawler-app .hint { font-size: 11.5px; color: var(--muted); line-height: 1.8; }
+
+/* ── تاریخ و گزینه‌ها ───────────────────────────────────── */
+.goldcrawler-app .date-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.goldcrawler-app .field { display: flex; flex-direction: column; gap: 5px; }
+.goldcrawler-app .field > span { font-size: 11.5px; color: var(--muted); }
+.goldcrawler-app .field input { text-align: center; letter-spacing: .5px; }
+.goldcrawler-app .field-error { margin-top: 8px; color: var(--down); font-size: 12px; }
+
+.goldcrawler-app .switch { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; cursor: pointer; }
+.goldcrawler-app .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.goldcrawler-app .switch__track {
+  position: relative; flex: none;
+  width: 38px; height: 22px; margin-top: 2px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background .18s;
+}
+.goldcrawler-app .switch__thumb {
+  position: absolute; top: 3px; inset-inline-start: 3px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: var(--shadow-sm);
+  transition: transform .18s;
+}
+.goldcrawler-app .switch input:checked + .switch__track { background: var(--primary); }
+.goldcrawler-app .switch input:checked + .switch__track .switch__thumb { transform: translateX(-16px); }
+.goldcrawler-app .switch input:focus-visible + .switch__track { outline: 2px solid var(--primary); outline-offset: 2px; }
+.goldcrawler-app .switch__label { font-size: 13px; line-height: 1.6; }
+.goldcrawler-app .switch__label small { display: block; font-size: 11.5px; color: var(--muted); }
+
+.goldcrawler-app .sidebar__actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0 4px;
+  background: linear-gradient(to top, var(--surface) 74%, transparent);
+}
+
+/* ── دکمه‌ها ────────────────────────────────────────────── */
+.goldcrawler-app .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, transform .08s, opacity .15s;
+}
+.goldcrawler-app .btn:active { transform: translateY(1px); }
+.goldcrawler-app .btn:disabled { opacity: .55; cursor: not-allowed; }
+.goldcrawler-app .btn svg { width: 16px; height: 16px; }
+.goldcrawler-app .btn--primary { background: var(--primary); color: var(--primary-ink); font-weight: 600; box-shadow: var(--shadow-sm); }
+.goldcrawler-app .btn--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 88%, #000); }
+.goldcrawler-app .btn--ghost { border-color: var(--border-strong); background: transparent; color: var(--ink-soft); }
+.goldcrawler-app .btn--ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+.goldcrawler-app .btn--soft { background: var(--surface-2); border-color: var(--border); color: var(--ink-soft); font-size: 12.5px; padding: 8px 13px; }
+.goldcrawler-app .btn--soft:hover:not(:disabled) { border-color: var(--border-strong); color: var(--ink); }
+
+/* ── حالت خالی ──────────────────────────────────────────── */
+.goldcrawler-app .empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 70px 24px;
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.goldcrawler-app .empty__art { width: 62px; height: 62px; color: var(--border-strong); }
+.goldcrawler-app .empty__art svg { width: 100%; height: 100%; }
+.goldcrawler-app .empty h2 { font-size: 16px; }
+.goldcrawler-app .empty p { color: var(--muted); font-size: 13px; max-width: 380px; }
+
+/* ── کارت‌های آمار ──────────────────────────────────────── */
+.goldcrawler-app .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(262px, 1fr)); gap: 14px; }
+
+.goldcrawler-app .stat {
+  position: relative; overflow: hidden;
+  padding: 15px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.goldcrawler-app .stat::before {
+  content: ""; position: absolute; inset-block: 0; inset-inline-start: 0;
+  width: 3px; background: var(--dot, var(--primary));
+}
+.goldcrawler-app .stat__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.goldcrawler-app .stat__name { font-size: 13px; font-weight: 600; }
+.goldcrawler-app .stat__unit { font-size: 11px; color: var(--muted); }
+.goldcrawler-app .stat__value { font-size: 22px; font-weight: 700; letter-spacing: -.2px; }
+.goldcrawler-app .stat__delta { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.goldcrawler-app .stat__delta.up { background: var(--up-soft); color: var(--up); }
+.goldcrawler-app .stat__delta.down { background: var(--down-soft); color: var(--down); }
+.goldcrawler-app .stat__delta.flat { background: var(--surface-2); color: var(--muted); }
+.goldcrawler-app .stat__meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  text-align: start;
+}
+.goldcrawler-app .stat__meta b { display: block; color: var(--ink-soft); font-weight: 600; font-size: 12.5px; }
+
+/* ── کارت‌ها ────────────────────────────────────────────── */
+.goldcrawler-app .card { padding: 16px 18px 18px; }
+.goldcrawler-app .card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.goldcrawler-app .card__head h2 { font-size: 15px; }
+.goldcrawler-app .card__sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.goldcrawler-app .export { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ── نمودار ─────────────────────────────────────────────── */
+.goldcrawler-app .chart-wrap { position: relative; width: 100%; }
+.goldcrawler-app #chart { display: block; width: 100%; height: 320px; overflow: visible; }
+.goldcrawler-app .chart-grid line { stroke: var(--border); stroke-width: 1; }
+.goldcrawler-app .chart-axis text { fill: var(--muted); font-size: 10.5px; font-family: inherit; }
+.goldcrawler-app .chart-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.goldcrawler-app .chart-area { opacity: .12; }
+.goldcrawler-app .chart-cursor { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 4 4; }
+.goldcrawler-app .chart-dot { stroke: var(--surface); stroke-width: 2; }
+
+.goldcrawler-app .chart-tip {
+  position: absolute; z-index: 5; pointer-events: none;
+  min-width: 150px; padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  transform: translate(-50%, 0);
+}
+.goldcrawler-app .chart-tip__date { font-weight: 600; margin-bottom: 5px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+.goldcrawler-app .chart-tip__row { display: flex; align-items: center; gap: 7px; justify-content: space-between; }
+.goldcrawler-app .chart-tip__row span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
+.goldcrawler-app .chart-tip__row b { font-weight: 600; }
+
+.goldcrawler-app .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+.goldcrawler-app .legend__item { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-soft); cursor: pointer; user-select: none; }
+.goldcrawler-app .legend__item.is-off { opacity: .4; }
+.goldcrawler-app .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dot); flex: none; }
+
+/* ── جدول ──────────────────────────────────────────────── */
+.goldcrawler-app .chips--tabs { margin-bottom: 12px; }
+.goldcrawler-app .table-wrap { max-height: 460px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); scrollbar-width: thin; }
+
+.goldcrawler-app table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+.goldcrawler-app thead th {
+  position: sticky; top: 0; z-index: 2;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-soft);
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+.goldcrawler-app tbody td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: center; white-space: nowrap; }
+.goldcrawler-app tbody tr:last-child td { border-bottom: 0; }
+.goldcrawler-app tbody tr:hover td { background: var(--surface-2); }
+.goldcrawler-app tbody tr.is-filled td { color: var(--muted); }
+.goldcrawler-app .tag {
+  display: inline-block; padding: 1px 9px; border-radius: 999px;
+  font-size: 11px; background: var(--up-soft); color: var(--up);
+}
+.goldcrawler-app .tag--filled { background: var(--surface-2); color: var(--muted); }
+.goldcrawler-app .tag--none { background: var(--down-soft); color: var(--down); }
+.goldcrawler-app .num { font-variant-numeric: tabular-nums; }
+
+.goldcrawler-app .table-foot { margin-top: 10px; font-size: 12px; color: var(--muted); text-align: center; }
+
+/* ── آرشیو ──────────────────────────────────────────────── */
+.goldcrawler-app .archive { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.goldcrawler-app .archive__item { padding: 11px 13px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.goldcrawler-app .archive__name { font-size: 13px; font-weight: 600; }
+.goldcrawler-app .archive__meta { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.goldcrawler-app .archive__empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12.5px; }
+.goldcrawler-app .datadir { margin-top: 12px; direction: ltr; text-align: start; word-break: break-all; font-size: 11px; }
+
+/* ── اعلان‌ها و بارگذاری ────────────────────────────────── */
+.goldcrawler-app .toasts { position: fixed; inset-block-end: 20px; inset-inline-end: 20px; z-index: 60; display: flex; flex-direction: column; gap: 8px; max-width: min(380px, 90vw); }
+.goldcrawler-app .toast {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 11px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-inline-start: 3px solid var(--primary);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  font-size: 12.5px;
+  animation: toast-in .22s ease-out;
+}
+.goldcrawler-app .toast--error { border-inline-start-color: var(--down); }
+.goldcrawler-app .toast--ok { border-inline-start-color: var(--up); }
+.goldcrawler-app .toast--warn { border-inline-start-color: var(--accent); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+.goldcrawler-app .overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(3px); }
+.goldcrawler-app .overlay__box { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px 34px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-md); font-size: 13px; }
+.goldcrawler-app .spinner { width: 30px; height: 30px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── واکنش‌گرا ──────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .goldcrawler-app .layout { grid-template-columns: 1fr; padding: 14px; }
+  .goldcrawler-app .sidebar { position: static; max-height: none; }
+  .goldcrawler-app .symbol-list { max-height: 320px; }
+}
+@media (max-width: 560px) {
+  .goldcrawler-app .topbar { padding: 10px 14px; }
+  .goldcrawler-app .brand__text small { display: none; }
+  .goldcrawler-app #chart { height: 260px; }
+  .goldcrawler-app .card { padding: 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .goldcrawler-app, .goldcrawler-app *, .goldcrawler-app *::before, .goldcrawler-app *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+@media print {
+  .goldcrawler-app .topbar, .goldcrawler-app .sidebar, .goldcrawler-app .export, .goldcrawler-app .chips, .goldcrawler-app .toasts, .goldcrawler-app .overlay, .goldcrawler-app #archiveCard { display: none !important; }
+  .goldcrawler-app .layout { grid-template-columns: 1fr; }
+  .goldcrawler-app .panel { box-shadow: none; }
+}

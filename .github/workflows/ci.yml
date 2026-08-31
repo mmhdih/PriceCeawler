@@ -88,3 +88,58 @@ jobs:
           path: dist/PriceCeawler.exe
           if-no-files-found: error
           retention-days: 7
+
+  wordpress-plugin-tests:
+    name: تست افزونه وردپرس (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.3']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: zip, mbstring, json, curl
+
+      - name: تولید داده مرجع تقویم شمسی از نسخه پایتون تأییدشده
+        run: |
+          python3 - <<'PY' > /tmp/jalali_fixtures.json
+          import json, random, datetime as dt
+          from priceceawler.jalali import gregorian_to_jalali
+
+          random.seed(42)
+          pairs = []
+          for _ in range(2000):
+              o = random.randint(dt.date(1300, 1, 1).toordinal(), dt.date(2200, 1, 1).toordinal())
+              g = dt.date.fromordinal(o)
+              j = gregorian_to_jalali(g.year, g.month, g.day)
+              pairs.append({"g": [g.year, g.month, g.day], "j": list(j)})
+          print(json.dumps(pairs))
+          PY
+
+      - name: اجرای تست‌های PHP
+        working-directory: wordpress-plugin/goldcrawler/tests
+        run: |
+          set -euo pipefail
+          php test-jalali.php /tmp/jalali_fixtures.json
+          for f in test-tgju.php test-report.php test-xlsx.php test-storage.php test-crawler.php test-ajax.php test-bootstrap.php; do
+            echo "--- $f ---"
+            php "$f"
+          done
+
+      - name: بسته‌بندی افزونه و بررسی سلامت zip
+        run: |
+          cd wordpress-plugin
+          zip -r -q goldcrawler.zip goldcrawler -x "goldcrawler/tests/*"
+          php -r '$z = new ZipArchive(); if ($z->open("goldcrawler.zip") !== true) { fwrite(STDERR, "invalid zip\n"); exit(1); } if ($z->locateName("goldcrawler/goldcrawler.php") === false) { fwrite(STDERR, "missing main plugin file\n"); exit(1); } echo "zip ok, " . $z->numFiles . " files\n";'
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.php == '8.3'
+        with:
+          name: goldcrawler-wordpress-plugin
+          path: wordpress-plugin/goldcrawler.zip
+          if-no-files-found: error
+          retention-days: 14
