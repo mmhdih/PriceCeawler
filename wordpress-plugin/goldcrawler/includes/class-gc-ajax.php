@@ -2,11 +2,13 @@
 /**
  * wp_ajax_* handlers behind admin-ajax.php.
  *
- * Every action here requires BOTH a logged-in user with the plugin's
- * capability AND a valid nonce - deliberately admin-only (crawl, settings
- * and add-symbol all mutate shared state), and no wp_ajax_nopriv_* handlers
+ * Every action here requires BOTH a logged-in user holding the plugin's
+ * capability AND a valid nonce. CAPABILITY is 'read', which every logged-in
+ * WordPress account holds regardless of role (Subscriber and up) - so this
+ * is "any signed-in user", not "admins only". No wp_ajax_nopriv_* handlers
  * are registered at all, so a logged-out visitor gets WordPress's normal
- * silent "0" response with no code of ours ever running.
+ * silent "0" response with no code of ours ever running - only accounts,
+ * never anonymous visitors, can reach this.
  */
 
 if (!defined('ABSPATH')) {
@@ -23,7 +25,7 @@ class GC_Api_Exception extends Exception {
 
 final class GC_Ajax {
 
-    const CAPABILITY = 'manage_options';
+    const CAPABILITY = 'read';
     const NONCE_ACTION = 'goldcrawler_ajax';
 
     /**

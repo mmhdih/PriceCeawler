@@ -44,7 +44,7 @@ function gc_call($handler, $with_nonce = true) {
 $GLOBALS['gc_test_current_user_can'] = false;
 gc_stage_body(array());
 list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));
-gc_check($resp['status'] === 403 && $resp['data']['success'] === false, 'meta is refused without manage_options capability');
+gc_check($resp['status'] === 403 && $resp['data']['success'] === false, 'meta is refused without the read capability');
 
 $GLOBALS['gc_test_current_user_can'] = true;
 list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'), false);
@@ -55,6 +55,20 @@ gc_check($resp['data']['success'] === true, 'meta succeeds for an admin with a v
 $meta = $resp['data']['data'];
 gc_check(count($meta['symbols']) === 32, 'meta lists the full built-in catalog');
 gc_check(count($meta['presets']) === 7, 'meta includes all 7 range presets');
+
+// -- meta: CAPABILITY = 'read' means every logged-in role, not just admins --
+$GLOBALS['gc_test_user_role'] = 'administrator';
+list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));
+gc_check($resp['data']['success'] === true, 'an Administrator can use the tool');
+
+$GLOBALS['gc_test_user_role'] = 'subscriber';
+list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));
+gc_check($resp['data']['success'] === true, 'a plain Subscriber (any logged-in user) can use the tool, not just admins');
+
+$GLOBALS['gc_test_user_role'] = 'logged_out';
+list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));
+gc_check($resp['status'] === 403 && $resp['data']['success'] === false, 'a logged-out visitor is still refused');
+$GLOBALS['gc_test_user_role'] = null; // restore the legacy blanket-boolean mode for the rest of this file
 
 // -- series: validation errors ------------------------------------------
 gc_stage_body(array('symbols' => array(), 'start' => '1404/01/01', 'end' => '1404/01/10'));

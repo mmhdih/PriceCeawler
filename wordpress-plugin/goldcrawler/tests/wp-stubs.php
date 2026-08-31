@@ -14,7 +14,8 @@ $GLOBALS['gc_test_options'] = array();
 $GLOBALS['gc_test_actions'] = array();
 $GLOBALS['gc_test_remote_get_responses'] = array(); // url => callable|array
 $GLOBALS['gc_test_cron_scheduled'] = array();
-$GLOBALS['gc_test_current_user_can'] = true; // flip to simulate a logged-out/non-admin request
+$GLOBALS['gc_test_current_user_can'] = true; // legacy blanket override: true=any capability granted, false=none
+$GLOBALS['gc_test_user_role'] = null; // set to 'logged_out'|'subscriber'|'administrator' for granular per-capability checks
 $GLOBALS['gc_test_last_json'] = null; // captured wp_send_json_* payload
 
 function wp_upload_dir() {
@@ -61,7 +62,18 @@ function wp_remote_retrieve_body($response) { return $response['body']; }
 function home_url($path = '') { return 'http://example.test' . $path; }
 function admin_url($path = '') { return 'http://example.test/wp-admin/' . ltrim($path, '/'); }
 
-function current_user_can($capability) { return $GLOBALS['gc_test_current_user_can']; }
+function current_user_can($capability) {
+    $role = $GLOBALS['gc_test_user_role'];
+    if ($role !== null) {
+        // A simplified but faithful model of WordPress's real roles: every
+        // logged-in account (Subscriber and up) holds 'read'; only
+        // Administrator holds 'manage_options'.
+        if ($role === 'logged_out') return false;
+        if ($role === 'subscriber') return $capability === 'read';
+        if ($role === 'administrator') return true;
+    }
+    return $GLOBALS['gc_test_current_user_can'];
+}
 
 function wp_create_nonce($action) { return 'test-nonce-' . md5($action); }
 function wp_verify_nonce($nonce, $action) { return $nonce === wp_create_nonce($action) ? 1 : false; }

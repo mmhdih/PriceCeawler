@@ -41,11 +41,21 @@ gc_check(isset($GLOBALS['gc_test_actions']['shortcode_gold_crawler']), '[gold_cr
 
 $GLOBALS['gc_test_current_user_can'] = false;
 $locked_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
-gc_check(strpos($locked_html, 'در دسترس نیست') !== false || strpos($locked_html, 'مدیران سایت') !== false, 'non-admins see a locked message, not the app shell');
+gc_check(strpos($locked_html, 'وارد حساب کاربری') !== false, 'logged-out visitors see a locked message, not the app shell');
 
 $GLOBALS['gc_test_current_user_can'] = true;
 $app_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
-gc_check(strpos($app_html, 'id="goldcrawler-app"') !== false, 'admins see the real app container');
+gc_check(strpos($app_html, 'id="goldcrawler-app"') !== false, 'a signed-in user sees the real app container');
+
+// CAPABILITY = 'read' means any logged-in role, not just Administrator.
+$GLOBALS['gc_test_user_role'] = 'subscriber';
+$subscriber_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
+gc_check(strpos($subscriber_html, 'id="goldcrawler-app"') !== false, 'a plain Subscriber sees the real app container too');
+
+$GLOBALS['gc_test_user_role'] = 'logged_out';
+$anon_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
+gc_check(strpos($anon_html, 'وارد حساب کاربری') !== false, 'an anonymous visitor is still locked out');
+$GLOBALS['gc_test_user_role'] = null;
 gc_check(strpos($app_html, 'class="goldcrawler-app"') !== false, 'the app root carries its scoping class');
 
 // -- AJAX actions are registered under the expected hook names --------------

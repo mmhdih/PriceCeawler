@@ -20,7 +20,7 @@ final class GC_Shortcode {
 
     public static function render($atts = array()) {
         if (!current_user_can(GC_Ajax::CAPABILITY)) {
-            return '<p class="goldcrawler-locked">این ابزار فقط برای مدیران سایت در دسترس است.</p>';
+            return '<p class="goldcrawler-locked">برای مشاهده این ابزار باید وارد حساب کاربری خود در سایت شوید.</p>';
         }
 
         self::enqueue_assets();
