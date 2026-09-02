@@ -12,6 +12,7 @@ define('ABSPATH', '/tmp/');
 $GLOBALS['gc_test_upload_dir'] = sys_get_temp_dir() . '/gc-wp-uploads-' . getmypid();
 $GLOBALS['gc_test_options'] = array();
 $GLOBALS['gc_test_actions'] = array();
+$GLOBALS['gc_test_filters'] = array();
 $GLOBALS['gc_test_remote_get_responses'] = array(); // url => callable|array
 $GLOBALS['gc_test_cron_scheduled'] = array();
 $GLOBALS['gc_test_current_user_can'] = true; // legacy blanket override: true=any capability granted, false=none
@@ -155,6 +156,16 @@ function do_action($hook, ...$args) {
     }
 }
 function add_shortcode($tag, $callback) { $GLOBALS['gc_test_actions']['shortcode_' . $tag][] = $callback; }
+
+function add_filter($hook, $callback, $priority = 10, $accepted_args = 1) {
+    $GLOBALS['gc_test_filters'][$hook][] = $callback;
+}
+function apply_filters($hook, $value, ...$args) {
+    foreach ($GLOBALS['gc_test_filters'][$hook] ?? array() as $cb) {
+        $value = call_user_func($cb, $value, ...$args);
+    }
+    return $value;
+}
 
 function register_activation_hook($file, $callback) { $GLOBALS['gc_test_actions']['activate'][] = $callback; }
 function register_deactivation_hook($file, $callback) { $GLOBALS['gc_test_actions']['deactivate'][] = $callback; }

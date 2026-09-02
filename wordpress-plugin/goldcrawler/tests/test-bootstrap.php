@@ -43,11 +43,20 @@ gc_check(isset($GLOBALS['gc_test_actions']['shortcode_gold_crawler']), '[gold_cr
 $GLOBALS['gc_test_user_role'] = 'logged_out';
 $anon_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
 gc_check(strpos($anon_html, 'وارد حساب کاربری') !== false, 'a logged-out visitor is told to sign in');
+gc_check(strpos($anon_html, 'class="goldcrawler-app goldcrawler-app--gate"') !== false, 'the logged-out gate is still scoped/styled as a goldcrawler-app');
+gc_check(strpos($anon_html, 'href="' . GC_Shortcode::DEFAULT_ACCOUNT_URL . '"') !== false, 'the logged-out gate links straight to the site login/register page');
+gc_check(strpos($anon_html, 'gate__icon--lock') !== false, 'the logged-out gate uses the lock icon variant');
+
+add_filter('goldcrawler_account_url', function () { return 'https://example.test/custom-login/'; });
+$anon_html_filtered = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
+gc_check(strpos($anon_html_filtered, 'href="https://example.test/custom-login/"') !== false, 'goldcrawler_account_url filter overrides the login link');
 
 $GLOBALS['gc_test_user_role'] = 'subscriber';
 $GLOBALS['gc_test_current_user_id'] = 4242; // not licensed
 $unlicensed_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
 gc_check(strpos($unlicensed_html, 'مجوز استفاده از این ابزار') !== false, 'a signed-in but unlicensed user is told to contact the admin, not asked to log in again');
+gc_check(strpos($unlicensed_html, 'gate__icon--warn') !== false, 'the unlicensed gate uses the warn icon variant, not the lock one');
+gc_check(strpos($unlicensed_html, 'gate__cta') === false, 'the unlicensed gate has no login CTA - the user is already logged in');
 
 GC_License::grant(4242);
 $app_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);

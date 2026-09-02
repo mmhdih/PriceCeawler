@@ -3,44 +3,50 @@
    ============================================================ */
 
 .goldcrawler-app {
-  --bg: #f4f6fa;
+  /* Brand palette matched to tavoosweb.ir: primary rgb(130,36,227), secondary
+     rgb(30,115,190), body text #353535 - supplied directly by the site owner. */
+  --bg: #f7f5fb;
   --surface: #ffffff;
-  --surface-2: #f8fafc;
-  --ink: #16202e;
-  --ink-soft: #46536a;
-  --muted: #78859a;
-  --border: #e3e8f0;
-  --border-strong: #cfd7e4;
-  --primary: #1f3a5f;
+  --surface-2: #f9f7fc;
+  --ink: #353535;
+  --ink-soft: #5b5b63;
+  --muted: #8a8a92;
+  --border: #e6e3ee;
+  --border-strong: #d3cee2;
+  --primary: #8224e3;
   --primary-ink: #ffffff;
-  --primary-soft: #eaf0f9;
-  --accent: #b8862b;
-  --accent-soft: #fbf3e2;
+  --primary-soft: #f1e4fb;
+  --accent: #1e73be;
+  --accent-soft: #e7f1fb;
   --up: #0f8a52;
   --up-soft: #e7f6ee;
   --down: #d13c3c;
   --down-soft: #fdecec;
-  --shadow-sm: 0 1px 2px rgba(16, 26, 43, .06), 0 1px 3px rgba(16, 26, 43, .04);
-  --shadow-md: 0 6px 24px rgba(16, 26, 43, .08);
+  --shadow-sm: 0 1px 2px rgba(90, 36, 180, .07), 0 1px 3px rgba(90, 36, 180, .05);
+  --shadow-md: 0 6px 24px rgba(90, 36, 180, .10);
   --radius: 14px;
   --radius-sm: 10px;
   --sidebar: 340px;
 }
 
 .goldcrawler-app[data-theme="dark"] {
-  --bg: #0d1219;
-  --surface: #151d29;
-  --surface-2: #1b2533;
-  --ink: #e8eef7;
-  --ink-soft: #b9c5d6;
-  --muted: #8494aa;
-  --border: #24303f;
-  --border-strong: #33415a;
-  --primary: #4d86cf;
-  --primary-ink: #08111c;
-  --primary-soft: #1a2637;
-  --accent: #e0b055;
-  --accent-soft: #2a2318;
+  /* Same brand hues, lightened just enough to keep ~4.5:1 text/icon contrast
+     against a dark surface - the base --primary/--accent are tuned for a
+     light background and read too dim (and too low-contrast for a focus
+     ring or direct-on-surface text) straight on black. */
+  --bg: #150f1e;
+  --surface: #1f1830;
+  --surface-2: #251d3a;
+  --ink: #ece8f5;
+  --ink-soft: #c3bcd6;
+  --muted: #8f87a3;
+  --border: #322947;
+  --border-strong: #453a60;
+  --primary: #9d4de8;
+  --primary-ink: #ffffff;
+  --primary-soft: #2c1f42;
+  --accent: #4da3e8;
+  --accent-soft: #1c2e42;
   --up: #35c07d;
   --up-soft: #14291f;
   --down: #f0706e;
@@ -347,6 +353,7 @@
   background: var(--surface-2);
   color: var(--ink);
   font-family: inherit; font-size: 13px; font-weight: 500;
+  text-decoration: none; /* .btn is also used on <a> (e.g. the gate's login CTA), not just <button> */
   cursor: pointer;
   transition: background .15s, border-color .15s, transform .08s, opacity .15s;
 }
@@ -373,6 +380,32 @@
 .goldcrawler-app .empty__art svg { width: 100%; height: 100%; }
 .goldcrawler-app .empty h2 { font-size: 16px; }
 .goldcrawler-app .empty p { color: var(--muted); font-size: 13px; max-width: 380px; }
+
+/* ── دروازه ورود/دسترسی (کاربر واردنشده یا بدون لایسنس) ────── */
+.goldcrawler-app.goldcrawler-app--gate {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 320px; padding: 48px 20px;
+  background: var(--bg);
+}
+.goldcrawler-app .gate {
+  width: 100%; max-width: 420px; text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 40px 32px;
+}
+.goldcrawler-app .gate__icon {
+  width: 60px; height: 60px; margin: 0 auto 18px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--primary-soft); color: var(--primary);
+}
+.goldcrawler-app .gate__icon svg { width: 28px; height: 28px; }
+.goldcrawler-app .gate__icon--warn { background: var(--accent-soft); color: var(--accent); }
+.goldcrawler-app .gate__title { margin: 0 0 10px; font-size: 17px; font-weight: 700; color: var(--ink); }
+.goldcrawler-app .gate__desc { margin: 0 0 24px; font-size: 13.5px; line-height: 1.9; color: var(--ink-soft); }
+.goldcrawler-app .gate__cta { padding: 11px 26px; font-size: 14px; }
 
 /* ── کارت‌های آمار ──────────────────────────────────────── */
 .goldcrawler-app .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(262px, 1fr)); gap: 14px; }
