@@ -203,7 +203,9 @@
 }
 
 
-.goldcrawler-app input[type="text"], .goldcrawler-app input[type="search"], .goldcrawler-app select {
+.goldcrawler-app input[type="text"], .goldcrawler-app input[type="search"],
+.goldcrawler-app input[type="password"], .goldcrawler-app input[type="email"],
+.goldcrawler-app select {
   /* Some WebKit/Blink builds size a native type="search" field using its own
      OS-level decoration box, ignoring author width/box-sizing entirely and
      letting it overflow its container - stripping that native appearance
@@ -404,8 +406,36 @@
 .goldcrawler-app .gate__icon svg { width: 28px; height: 28px; }
 .goldcrawler-app .gate__icon--warn { background: var(--accent-soft); color: var(--accent); }
 .goldcrawler-app .gate__title { margin: 0 0 10px; font-size: 17px; font-weight: 700; color: var(--ink); }
-.goldcrawler-app .gate__desc { margin: 0 0 24px; font-size: 13.5px; line-height: 1.9; color: var(--ink-soft); }
-.goldcrawler-app .gate__cta { padding: 11px 26px; font-size: 14px; }
+.goldcrawler-app .gate__desc { margin: 0 0 20px; font-size: 13.5px; line-height: 1.9; color: var(--ink-soft); }
+
+/* the login/registration forms embedded directly in the gate - no redirect */
+.goldcrawler-app .gate__auth { text-align: start; }
+.goldcrawler-app .gate__tabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+  background: var(--surface-2); border-radius: var(--radius-sm); padding: 4px;
+}
+.goldcrawler-app .gate__tab {
+  flex: 1; padding: 8px 10px; border: 0; border-radius: calc(var(--radius-sm) - 3px);
+  background: transparent; color: var(--ink-soft);
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background .15s, color .15s;
+}
+.goldcrawler-app .gate__tab.is-active { background: var(--surface); color: var(--primary); box-shadow: var(--shadow-sm); }
+.goldcrawler-app .gate__form { display: flex; flex-direction: column; gap: 12px; }
+.goldcrawler-app .gate__field { display: flex; flex-direction: column; gap: 5px; }
+.goldcrawler-app .gate__field span { font-size: 12px; font-weight: 500; color: var(--ink-soft); }
+.goldcrawler-app .gate__submit { width: 100%; padding: 11px; font-size: 14px; margin-top: 2px; }
+.goldcrawler-app .gate__forgot {
+  display: block; margin-top: 4px; text-align: center;
+  font-size: 12px; color: var(--accent); text-decoration: none;
+}
+.goldcrawler-app .gate__forgot:hover { text-decoration: underline; }
+.goldcrawler-app .gate__message {
+  margin-top: 14px; padding: 10px 12px; text-align: center;
+  border-radius: var(--radius-sm); font-size: 12.5px;
+  background: var(--down-soft); color: var(--down);
+}
+.goldcrawler-app .gate__message.is-ok { background: var(--up-soft); color: var(--up); }
 
 /* ── کارت‌های آمار ──────────────────────────────────────── */
 .goldcrawler-app .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(262px, 1fr)); gap: 14px; }

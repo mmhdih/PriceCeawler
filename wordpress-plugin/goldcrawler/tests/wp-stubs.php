@@ -21,6 +21,9 @@ $GLOBALS['gc_test_current_user_id'] = 42;
 $GLOBALS['gc_test_is_admin'] = false; // simulates being inside wp-admin (for is_admin())
 $GLOBALS['gc_test_users'] = array(); // populated by tests via gc_test_add_user()
 $GLOBALS['gc_test_last_json'] = null; // captured wp_send_json_* payload
+$GLOBALS['gc_test_wp_users'] = array(); // real-account records for wp_signon()/wp_create_user() below: id => [login, email, password]
+$GLOBALS['gc_test_enqueued_styles'] = array();
+$GLOBALS['gc_test_enqueued_scripts'] = array();
 
 function wp_upload_dir() {
     return array('basedir' => $GLOBALS['gc_test_upload_dir'], 'baseurl' => 'http://example.test/uploads');
@@ -178,8 +181,8 @@ function plugin_dir_path($file) { return rtrim(dirname($file), '/') . '/'; }
 function plugin_dir_url($file) { return 'http://example.test/wp-content/plugins/goldcrawler/'; }
 function plugins_url($path = '', $file = '') { return 'http://example.test/wp-content/plugins/goldcrawler/' . ltrim($path, '/'); }
 
-function wp_enqueue_style(...$args) {}
-function wp_enqueue_script(...$args) {}
+function wp_enqueue_style($handle, ...$args) { $GLOBALS['gc_test_enqueued_styles'][] = $handle; }
+function wp_enqueue_script($handle, ...$args) { $GLOBALS['gc_test_enqueued_scripts'][] = $handle; }
 function wp_localize_script(...$args) {}
 function wp_register_style(...$args) {}
 function wp_register_script(...$args) {}
@@ -191,3 +194,45 @@ function esc_attr($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'
 function esc_url($s) { return $s; }
 function __($text, $domain = 'default') { return $text; }
 function sanitize_text_field($s) { return trim(strip_tags((string) $s)); }
+
+// -- GC_Auth (inline login/registration) stubs -------------------------------
+
+function is_ssl() { return false; }
+function wp_unslash($value) { return is_array($value) ? array_map('wp_unslash', $value) : stripslashes((string) $value); }
+function sanitize_user($username, $strict = false) { return preg_replace('/[^A-Za-z0-9_.\-@ ]/', '', trim((string) $username)); }
+function sanitize_email($email) { return trim((string) $email); }
+function is_email($email) { return (bool) filter_var($email, FILTER_VALIDATE_EMAIL); }
+function wp_lostpassword_url() { return 'http://example.test/wp-login.php?action=lostpassword'; }
+
+function username_exists($username) {
+    foreach ($GLOBALS['gc_test_wp_users'] as $u) {
+        if ($u['login'] === $username) { return $u['id']; }
+    }
+    return false;
+}
+function email_exists($email) {
+    foreach ($GLOBALS['gc_test_wp_users'] as $u) {
+        if ($u['email'] === $email) { return $u['id']; }
+    }
+    return false;
+}
+function wp_create_user($username, $password, $email = '') {
+    if (username_exists($username)) { return new WP_Error('existing_user_login', 'این نام کاربری قبلاً استفاده شده است.'); }
+    if ($email !== '' && email_exists($email)) { return new WP_Error('existing_user_email', 'این ایمیل قبلاً ثبت‌نام کرده است.'); }
+    $id = 1000 + count($GLOBALS['gc_test_wp_users']);
+    $GLOBALS['gc_test_wp_users'][] = array('id' => $id, 'login' => $username, 'email' => $email, 'password' => $password);
+    return $id;
+}
+/** Test-harness convenience: a successful sign-in also flips is_user_logged_in()/current_user_can() to 'subscriber'. */
+function wp_signon($creds = array(), $secure_cookie = '') {
+    $login = trim((string) ($creds['user_login'] ?? ''));
+    $password = (string) ($creds['user_password'] ?? '');
+    foreach ($GLOBALS['gc_test_wp_users'] as $u) {
+        if (($u['login'] === $login || $u['email'] === $login) && $u['password'] === $password) {
+            $GLOBALS['gc_test_user_role'] = 'subscriber';
+            $GLOBALS['gc_test_current_user_id'] = $u['id'];
+            return (object) array('ID' => $u['id'], 'user_login' => $u['login']);
+        }
+    }
+    return new WP_Error('invalid_username', 'نام کاربری/ایمیل یا رمز عبور اشتباه است.');
+}

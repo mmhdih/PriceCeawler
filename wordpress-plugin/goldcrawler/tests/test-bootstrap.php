@@ -41,22 +41,28 @@ gc_check(count(GC_Storage::load_archive('geram18')) > 0, 'the cron hook performe
 gc_check(isset($GLOBALS['gc_test_actions']['shortcode_gold_crawler']), '[gold_crawler] shortcode is registered');
 
 $GLOBALS['gc_test_user_role'] = 'logged_out';
+$GLOBALS['gc_test_options']['users_can_register'] = true; // site allows self-registration, like tavoosweb.ir does
 $anon_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
 gc_check(strpos($anon_html, 'وارد حساب کاربری') !== false, 'a logged-out visitor is told to sign in');
 gc_check(strpos($anon_html, 'class="goldcrawler-app goldcrawler-app--gate"') !== false, 'the logged-out gate is still scoped/styled as a goldcrawler-app');
-gc_check(strpos($anon_html, 'href="' . GC_Shortcode::DEFAULT_ACCOUNT_URL . '"') !== false, 'the logged-out gate links straight to the site login/register page');
 gc_check(strpos($anon_html, 'gate__icon--lock') !== false, 'the logged-out gate uses the lock icon variant');
+gc_check(strpos($anon_html, 'id="goldcrawlerLoginForm"') !== false, 'the logged-out gate renders an inline login form (no redirect to another page)');
+gc_check(strpos($anon_html, 'id="goldcrawlerRegisterForm"') !== false, 'the logged-out gate also renders an inline registration form');
+gc_check(strpos($anon_html, 'data-form="register" hidden') !== false, 'the registration form starts hidden - the login tab is active by default');
+gc_check(in_array('goldcrawler-gate', $GLOBALS['gc_test_enqueued_scripts'], true), 'gate.js (the inline auth handler) is enqueued for the logged-out gate');
 
-add_filter('goldcrawler_account_url', function () { return 'https://example.test/custom-login/'; });
-$anon_html_filtered = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
-gc_check(strpos($anon_html_filtered, 'href="https://example.test/custom-login/"') !== false, 'goldcrawler_account_url filter overrides the login link');
+$GLOBALS['gc_test_options']['users_can_register'] = false;
+$no_registration_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
+gc_check(strpos($no_registration_html, 'id="goldcrawlerRegisterForm"') === false, 'no registration form/tab is offered when the site does not allow self-registration');
+gc_check(strpos($no_registration_html, 'id="goldcrawlerLoginForm"') !== false, 'the login form is still offered either way');
+$GLOBALS['gc_test_options']['users_can_register'] = true;
 
 $GLOBALS['gc_test_user_role'] = 'subscriber';
 $GLOBALS['gc_test_current_user_id'] = 4242; // not licensed
 $unlicensed_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
 gc_check(strpos($unlicensed_html, 'مجوز استفاده از این ابزار') !== false, 'a signed-in but unlicensed user is told to contact the admin, not asked to log in again');
 gc_check(strpos($unlicensed_html, 'gate__icon--warn') !== false, 'the unlicensed gate uses the warn icon variant, not the lock one');
-gc_check(strpos($unlicensed_html, 'gate__cta') === false, 'the unlicensed gate has no login CTA - the user is already logged in');
+gc_check(strpos($unlicensed_html, 'gate__auth') === false, 'the unlicensed gate has no login/register form - the user is already logged in');
 
 GC_License::grant(4242);
 $app_html = call_user_func($GLOBALS['gc_test_actions']['shortcode_gold_crawler'][0]);
@@ -73,7 +79,14 @@ $GLOBALS['gc_test_user_role'] = null;
 foreach (array('meta', 'archive', 'series', 'export', 'settings', 'symbols', 'crawl') as $action) {
     gc_check(isset($GLOBALS['gc_test_actions']["wp_ajax_goldcrawler_{$action}"]), "wp_ajax_goldcrawler_{$action} is registered");
 }
-gc_check(!isset($GLOBALS['gc_test_actions']['wp_ajax_nopriv_goldcrawler_meta']), 'no nopriv handler exists (logged-out visitors get nothing)');
+gc_check(!isset($GLOBALS['gc_test_actions']['wp_ajax_nopriv_goldcrawler_meta']), 'no nopriv handler exists for the real app actions (logged-out visitors get nothing there)');
+
+// GC_Auth is the sole, deliberate exception: login/register must work for a
+// logged-out visitor, so (and only so) those two actions get nopriv hooks.
+foreach (array('login', 'register') as $action) {
+    gc_check(isset($GLOBALS['gc_test_actions']["wp_ajax_nopriv_goldcrawler_{$action}"]), "wp_ajax_nopriv_goldcrawler_{$action} is registered for logged-out visitors");
+    gc_check(isset($GLOBALS['gc_test_actions']["wp_ajax_goldcrawler_{$action}"]), "wp_ajax_goldcrawler_{$action} is also registered for already-logged-in requests");
+}
 
 // -- the access-settings admin page is wired up on a real wp-admin load ----
 gc_check(isset($GLOBALS['gc_test_actions']['admin_menu']), 'GC_Admin registers on admin_menu when is_admin() is true');
