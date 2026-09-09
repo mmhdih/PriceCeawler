@@ -64,10 +64,20 @@ gc_check($fallback['resolution'] === 'daily', 'an unknown resolution falls back 
 // A symbol with no recorded samples is reported as an error, not silently empty.
 $missing = GC_Crawler::build_at(array('sekee'), $start, $end, true, false, '10m');
 gc_check($missing['series'] === array(), 'a symbol with no intraday samples yields no series');
-gc_check(
-    count($missing['errors']) === 1 && strpos($missing['errors'][0]['message'], 'نمونه درون‌روزی') !== false,
-    'the user is told explicitly that no intraday samples were recorded for that symbol/range'
-);
+// "No samples" alone is a dead end: the message must carry the next step,
+// since intraday data only exists from the moment recording is turned on.
+gc_check(count($missing['errors']) === 1, 'the symbol with no samples produces exactly one error');
+$gc_msg = $missing['errors'][0]['message'];
+gc_check(strpos($gc_msg, 'ثبت خودکار') !== false, 'the message names the recording switch the user has to turn on');
+gc_check(strpos($gc_msg, 'قابل بازیابی نیست') !== false, 'the message admits past intraday data cannot be recovered');
+
+// A symbol that *does* have samples, asked for a range outside them, gets a
+// different message naming the window that actually has data.
+$gc_far = array(1403, 1, 1);
+$gc_outside = GC_Crawler::build_at(array('geram18'), $gc_far, $gc_far, true, false, '10m');
+$gc_outside_msg = $gc_outside['errors'][0]['message'];
+gc_check(strpos($gc_outside_msg, 'بیرون از این محدوده') !== false, 'a range outside the recorded days says so');
+gc_check(strpos($gc_outside_msg, '۱۴۰۴/۰۵/۲۸') !== false, 'that message names the first recorded Jalali day in Persian digits');
 
 // -- CSV: daily output unchanged, intraday grows a time column --------------
 $daily_csv = GC_Report::to_csv($daily['series']);

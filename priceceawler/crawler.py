@@ -212,14 +212,17 @@ class Crawler:
 
         series: list[Series] = []
         errors: list[dict[str, str]] = []
+        recording = bool(self.settings.get("intraday_recording"))
         for symbol in self.resolve(keys):
             rows = intraday.build_rows(symbol, start, end, resolution)
             if not rows:
+                # Say why there is nothing and what to do about it - "no
+                # samples recorded" alone leaves the user with no next step.
                 errors.append(
                     {
                         "symbol": symbol.key,
                         "name": symbol.name,
-                        "message": f"برای «{symbol.name}» در این بازه هیچ نمونه درون‌روزی ثبت نشده است.",
+                        "message": intraday.explain_empty(symbol, recording),
                     }
                 )
                 continue

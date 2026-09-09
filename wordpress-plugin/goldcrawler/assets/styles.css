@@ -596,3 +596,15 @@
   .goldcrawler-app .layout { grid-template-columns: 1fr; }
   .goldcrawler-app .panel { box-shadow: none; }
 }
+
+/* ── انتخاب گروهی نمادها ─────────────────────────────────── */
+.goldcrawler-app .symbol-actions { display: flex; gap: 14px; margin-bottom: 8px; }
+.goldcrawler-app .link-btn {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 11.5px; color: var(--primary);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.goldcrawler-app .link-btn:hover { color: var(--accent); }
+.goldcrawler-app .link-btn:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px;
+}

@@ -137,12 +137,16 @@ final class GC_Crawler {
 
         $series = array();
         $errors = array();
+        $settings = GC_Storage::get_settings();
+        $recording = !empty($settings['intraday_recording']);
         foreach (self::resolve($keys) as $symbol) {
             $built = GC_Intraday::build_series($symbol, $start, $end, $resolution);
             if (!$built['rows']) {
+                // Say why there is nothing and what to do about it - "no
+                // samples recorded" alone leaves the user with no next step.
                 $errors[] = array(
                     'symbol' => $symbol['key'], 'name' => $symbol['name'],
-                    'message' => 'برای «' . $symbol['name'] . '» در این بازه هیچ نمونه درون‌روزی ثبت نشده است.',
+                    'message' => GC_Intraday::explain_empty($symbol, $start, $end, $recording),
                 );
                 continue;
             }

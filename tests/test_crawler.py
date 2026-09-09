@@ -141,13 +141,39 @@ class TestBuildAt(unittest.TestCase):
         self.crawler.build_at(["geram18"], self.today, self.today, resolution="10m")
         self.assertEqual(self.calls, [])
 
-    def test_intraday_without_samples_reports_a_clear_error(self):
+    def test_intraday_without_samples_says_to_turn_recording_on(self):
+        """The message has to carry a next step, not just "no data"."""
         result = self.crawler.build_at(
             ["never_sampled_key"], self.today, self.today, resolution="1h"
         )
         self.assertEqual(result.series, [])
         self.assertEqual(result.errors[0]["symbol"], "never_sampled_key")
-        self.assertIn("ثبت نشده", result.errors[0]["message"])
+        message = result.errors[0]["message"]
+        self.assertIn("ثبت خودکار", message)
+        self.assertIn("قابل بازیابی نیست", message)
+
+    def test_the_message_differs_once_recording_is_already_on(self):
+        self.crawler.settings.update({"intraday_recording": True})
+        result = self.crawler.build_at(
+            ["never_sampled_key"], self.today, self.today, resolution="1h"
+        )
+        self.assertIn("ثبت خودکار روشن است", result.errors[0]["message"])
+
+    def test_a_range_outside_the_recorded_days_names_the_recorded_window(self):
+        symbol = self.crawler.resolve(["geram18"])[0]
+        gregorian = self.today.to_gregorian()
+        base = int(
+            datetime(gregorian.year, gregorian.month, gregorian.day, 10, 0,
+                     tzinfo=intraday.TEHRAN).timestamp()
+        )
+        intraday.record(symbol.key, 7_000_000, base)
+
+        old_day = self.today.add_days(-200)
+        result = self.crawler.build_at(["geram18"], old_day, old_day, resolution="1h")
+        message = result.errors[0]["message"]
+        persian = str(self.today).translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
+        self.assertIn(persian, message)
+        self.assertIn("بیرون از این محدوده", message)
 
     def test_intraday_builds_rows_from_recorded_samples(self):
         symbol = self.crawler.resolve(["geram18"])[0]

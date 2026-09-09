@@ -57,7 +57,11 @@ list($resp,) = gc_call(array('GC_Ajax', 'handle_meta'));
 gc_check($resp['data']['success'] === true, 'meta succeeds for an admin with a valid nonce');
 $meta = $resp['data']['data'];
 gc_check(count($meta['symbols']) === 32, 'meta lists the full built-in catalog');
-gc_check(count($meta['presets']) === 7, 'meta includes all 7 range presets');
+gc_check(count($meta['presets']) === 8, 'meta includes all 8 range presets');
+$gc_preset_ids = array_column($meta['presets'], 'id');
+gc_check(in_array('1', $gc_preset_ids, true), 'a one-click "today" preset exists (intraday data only starts today)');
+$gc_today_preset = $meta['presets'][array_search('1', $gc_preset_ids, true)];
+gc_check($gc_today_preset['start'] === $gc_today_preset['end'], 'the "today" preset spans a single day');
 
 // -- meta: access follows GC_License, not a blanket "any logged-in user" ----
 $GLOBALS['gc_test_user_role'] = 'administrator';

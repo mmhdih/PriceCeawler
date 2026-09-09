@@ -171,6 +171,9 @@ final class GC_Report {
             return GC_Jalali::format($y, $m, $d);
         };
         $presets = array(
+            // Intraday reports only ever have today's samples on a fresh
+            // install, so "today" has to be reachable in one click.
+            array('id' => '1', 'label' => 'امروز', 'start' => $end),
             array('id' => '7', 'label' => '۷ روز', 'start' => $back(6)),
             array('id' => '30', 'label' => '۱ ماه', 'start' => $back(29)),
             array('id' => '90', 'label' => '۳ ماه', 'start' => $back(89)),

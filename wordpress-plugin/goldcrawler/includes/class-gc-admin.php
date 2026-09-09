@@ -20,13 +20,35 @@ final class GC_Admin {
     }
 
     public static function add_menu() {
-        add_options_page(
-            'دسترسی GoldCrawler',
+        // A top-level entry in the admin sidebar, not a page buried under
+        // Settings: this plugin has its own symbols, access list and
+        // intraday recording to manage, which is more than a settings pane.
+        add_menu_page(
+            'GoldCrawler — قیمت طلا و ارز',
             'GoldCrawler',
             GC_License::MANAGE_CAPABILITY,
             self::PAGE_SLUG,
-            array(__CLASS__, 'render_page')
+            array(__CLASS__, 'render_page'),
+            self::menu_icon(),
+            58
         );
+
+        // Deliberately the *only* registration for this slug. Registering the
+        // same slug under a second parent (e.g. also under Settings, to keep
+        // an old bookmark alive) makes WordPress resolve the parent file
+        // ambiguously and highlight the wrong menu.
+    }
+
+    /**
+     * A data: URI SVG so the menu icon needs no HTTP request and inherits
+     * the admin colour scheme (currentColor is what WordPress recolours).
+     */
+    private static function menu_icon() {
+        $svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"'
+            . ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+            . ' stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/>'
+            . '<path d="M7 15l3.5-4.5 3 3L20 6"/></svg>';
+        return 'data:image/svg+xml;base64,' . base64_encode($svg);
     }
 
     private static function handle_save() {

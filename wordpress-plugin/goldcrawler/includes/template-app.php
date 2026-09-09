@@ -47,6 +47,10 @@ if (!defined('ABSPATH')) { exit; }
       </div>
 
       <div class="chips chips--filters" id="groupFilters" role="tablist"></div>
+      <div class="symbol-actions">
+        <button class="link-btn" id="selectVisibleBtn" type="button">انتخاب همه</button>
+        <button class="link-btn" id="clearSymbolsBtn" type="button">حذف همه انتخاب‌ها</button>
+      </div>
       <div class="symbol-list" id="symbolList"></div>
 
       <details class="custom-symbol">

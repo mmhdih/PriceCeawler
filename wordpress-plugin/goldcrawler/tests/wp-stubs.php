@@ -115,6 +115,8 @@ function get_users($args = array()) { return $GLOBALS['gc_test_users']; }
 function is_admin() { return $GLOBALS['gc_test_is_admin']; }
 
 function add_options_page(...$args) { $GLOBALS['gc_test_actions']['options_pages'][] = $args; }
+function add_menu_page(...$args) { $GLOBALS['gc_test_actions']['menu_pages'][] = $args; }
+function add_submenu_page(...$args) { $GLOBALS['gc_test_actions']['submenu_pages'][] = $args; }
 
 function wp_nonce_field($action, $name = '_wpnonce', $referer = true, $echo = true) {
     $field = '<input type="hidden" name="' . $name . '" value="' . wp_create_nonce($action) . '">';

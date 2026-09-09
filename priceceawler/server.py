@@ -56,6 +56,9 @@ def range_presets(today: JalaliDate | None = None) -> list[dict[str, str]]:
     """Quick date ranges offered in the sidebar."""
     today = today or JalaliDate.today()
     presets = [
+        # Intraday reports only ever have today's samples on a fresh install,
+        # so "today" has to be reachable in one click.
+        {"id": "1", "label": "امروز", "start": str(today)},
         {"id": "7", "label": "۷ روز", "start": str(today.add_days(-6))},
         {"id": "30", "label": "۱ ماه", "start": str(today.add_days(-29))},
         {"id": "90", "label": "۳ ماه", "start": str(today.add_days(-89))},

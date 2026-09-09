@@ -91,7 +91,15 @@ foreach (array('login', 'register') as $action) {
 // -- the access-settings admin page is wired up on a real wp-admin load ----
 gc_check(isset($GLOBALS['gc_test_actions']['admin_menu']), 'GC_Admin registers on admin_menu when is_admin() is true');
 foreach ($GLOBALS['gc_test_actions']['admin_menu'] as $cb) { call_user_func($cb); }
-gc_check(!empty($GLOBALS['gc_test_actions']['options_pages']), 'the GoldCrawler settings page is actually added under Settings');
+gc_check(count($GLOBALS['gc_test_actions']['menu_pages'] ?? array()) === 1, 'GoldCrawler gets its own top-level entry in the admin sidebar');
+$gc_menu = $GLOBALS['gc_test_actions']['menu_pages'][0];
+gc_check($gc_menu[3] === GC_Admin::PAGE_SLUG, 'the top-level menu points at the plugin page slug');
+gc_check(strpos((string) $gc_menu[5], 'data:image/svg+xml;base64,') === 0, 'the menu icon is an inline data URI (no extra HTTP request)');
+gc_check(base64_decode(substr($gc_menu[5], strlen('data:image/svg+xml;base64,')), true) !== false, 'the menu icon payload is valid base64');
+// The same slug under two parents makes WordPress resolve the parent file
+// ambiguously and highlight the wrong menu, so it must be registered once.
+gc_check(empty($GLOBALS['gc_test_actions']['options_pages']), 'the page is no longer also registered under Settings');
+gc_check(empty($GLOBALS['gc_test_actions']['submenu_pages']), 'the slug is not registered a second time as a submenu');
 
 echo "checks: {$checks}, failures: {$failures}\n";
 exit($failures > 0 ? 1 : 0);

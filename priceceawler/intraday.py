@@ -37,6 +37,8 @@ __all__ = [
     "summary",
     "aggregate",
     "build_rows",
+    "explain_empty",
+    "symbol_summary",
     "range_bounds",
 ]
 
@@ -126,8 +128,12 @@ def _safe(symbol_key: str) -> str:
     return "".join(c if c.isalnum() or c in "-_." else "_" for c in symbol_key) or "_"
 
 
+def _symbol_dir(symbol_key: str) -> Path:
+    return base_dir() / _safe(symbol_key)
+
+
 def _day_path(symbol_key: str, iso_date: str) -> Path:
-    return base_dir() / _safe(symbol_key) / f"{iso_date}.json"
+    return _symbol_dir(symbol_key) / f"{iso_date}.json"
 
 
 def _read_day(path: Path) -> dict[int, float]:
@@ -319,6 +325,55 @@ def aggregate(
         )
         for start, prices in sorted(buckets.items())
     ]
+
+
+def symbol_summary(symbol_key: str) -> dict[str, str] | None:
+    """First/last recorded day for one symbol, or None if it has no data."""
+    files = sorted(_symbol_dir(symbol_key).glob("*.json"))
+    if not files:
+        return None
+    return {"first": files[0].stem, "last": files[-1].stem}
+
+
+_FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def _jalali_of_iso(iso: str) -> str:
+    """'2025-08-19' -> '۱۴۰۴/۰۵/۲۸', to read like the rest of the Persian UI."""
+    parts = iso.split("-")
+    if len(parts) != 3:
+        return iso
+    try:
+        year, month, day = (int(p) for p in parts)
+    except ValueError:
+        return iso
+    return str(JalaliDate(*gregorian_to_jalali(year, month, day))).translate(_FA_DIGITS)
+
+
+def explain_empty(symbol: Symbol, recording: bool) -> str:
+    """Say *why* a symbol has no intraday rows, and what to do about it.
+
+    "No samples recorded" on its own is a dead end: intraday data only exists
+    from the moment recording starts, so the useful answer is whether
+    recording is off, or on but younger than the range that was asked for.
+    """
+    stored = symbol_summary(symbol.key)
+    if not stored:
+        if recording:
+            return (
+                f"ثبت خودکار روشن است اما هنوز هیچ نمونه‌ای برای «{symbol.name}» ذخیره نشده؛"
+                " چند دقیقه صبر کنید یا «ثبت نمونه همین حالا» را بزنید."
+            )
+        return (
+            f"برای «{symbol.name}» هنوز داده درون‌روزی وجود ندارد. کلید «ثبت خودکار قیمت هر ۱۰ دقیقه»"
+            " را روشن کنید؛ از همان لحظه ثبت شروع می‌شود (داده گذشته قابل بازیابی نیست)."
+        )
+    first = _jalali_of_iso(stored["first"])
+    last = _jalali_of_iso(stored["last"])
+    return (
+        f"ثبت درون‌روزی «{symbol.name}» از {first} شروع شده و تا {last} داده دارد؛"
+        " بازه‌ای که انتخاب کرده‌اید بیرون از این محدوده است. بازه را به «امروز» تغییر دهید."
+    )
 
 
 def build_rows(

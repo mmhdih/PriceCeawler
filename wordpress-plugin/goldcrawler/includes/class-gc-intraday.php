@@ -380,6 +380,62 @@ final class GC_Intraday {
         return array('rows' => $rows, 'stats' => self::stats($rows, $symbol));
     }
 
+    /**
+     * Says *why* a symbol has no intraday rows for a range, and what to do.
+     *
+     * "No samples recorded" on its own is a dead end: intraday data only
+     * exists from the moment recording is switched on, so the useful answer
+     * is whether recording is off, or on but younger than the range asked
+     * for. @return string a message ready to show the user
+     */
+    public static function explain_empty($symbol, $start, $end, $recording) {
+        $name = $symbol['name'];
+        $stored = self::symbol_summary($symbol['key']);
+
+        if (!$stored) {
+            return $recording
+                ? 'ثبت خودکار روشن است اما هنوز هیچ نمونه‌ای برای «' . $name . '» ذخیره نشده'
+                    . '؛ چند دقیقه صبر کنید یا «ثبت نمونه همین حالا» را بزنید.'
+                : 'برای «' . $name . '» هنوز داده درون‌روزی وجود ندارد. کلید «ثبت خودکار قیمت هر ۱۰ دقیقه»'
+                    . ' را روشن کنید؛ از همان لحظه ثبت شروع می‌شود (داده گذشته قابل بازیابی نیست).';
+        }
+
+        // Data exists, just not inside the window they asked for.
+        $first = self::jalali_of_iso($stored['first']);
+        $last = self::jalali_of_iso($stored['last']);
+        return 'ثبت درون‌روزی «' . $name . '» از ' . $first . ' شروع شده و تا ' . $last
+            . ' داده دارد؛ بازه‌ای که انتخاب کرده‌اید بیرون از این محدوده است.'
+            . ' بازه را به «امروز» تغییر دهید.';
+    }
+
+    /** @return array|null the summary() row for one symbol, if it has data */
+    public static function symbol_summary($symbol_key) {
+        $dir = self::symbol_dir($symbol_key);
+        $files = glob($dir . '/*.json') ?: array();
+        if (!$files) {
+            return null;
+        }
+        sort($files);
+        return array(
+            'first' => basename($files[0], '.json'),
+            'last' => basename($files[count($files) - 1], '.json'),
+        );
+    }
+
+    /** '2025-08-19' -> '۱۴۰۴/۰۵/۲۸', to read like the rest of the Persian UI. */
+    private static function jalali_of_iso($iso) {
+        $parts = array_map('intval', explode('-', $iso));
+        if (count($parts) !== 3) {
+            return $iso;
+        }
+        list($jy, $jm, $jd) = GC_Jalali::gregorian_to_jalali($parts[0], $parts[1], $parts[2]);
+        return str_replace(
+            array('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'),
+            array('۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'),
+            GC_Jalali::format($jy, $jm, $jd)
+        );
+    }
+
     public static function stats($rows, $symbol) {
         $closes = array();
         foreach ($rows as $row) {

@@ -119,16 +119,7 @@ function renderGroupFilters() {
 
 function renderSymbolList() {
   const list = $('symbolList');
-  const query = state.query.trim().toLowerCase();
-  const matches = state.symbols.filter((symbol) => {
-    if (state.group !== 'all' && symbol.group !== state.group) return false;
-    if (!query) return true;
-    return (
-      symbol.name.toLowerCase().includes(query) ||
-      symbol.key.toLowerCase().includes(query) ||
-      symbol.group.toLowerCase().includes(query)
-    );
-  });
+  const matches = visibleSymbols();
 
   list.replaceChildren();
   if (!matches.length) {
@@ -162,6 +153,44 @@ function renderSymbolList() {
     row.append(checkbox, name, el('span', 'symbol__unit', symbol.unit));
     list.appendChild(row);
   });
+}
+
+/**
+ * Bulk selection. "Select all" applies to what the current group filter and
+ * search actually show, so it never silently selects symbols off-screen;
+ * "clear all" always clears the whole selection, visible or not.
+ */
+function visibleSymbols() {
+  const query = state.query.trim().toLowerCase();
+  return state.symbols.filter((symbol) => {
+    if (state.group !== 'all' && symbol.group !== state.group) return false;
+    if (!query) return true;
+    return (
+      symbol.name.toLowerCase().includes(query) ||
+      symbol.key.toLowerCase().includes(query) ||
+      symbol.group.toLowerCase().includes(query)
+    );
+  });
+}
+
+function selectVisibleSymbols() {
+  visibleSymbols().forEach((symbol) => state.selected.add(symbol.key));
+  renderSymbolList();
+  updateSymbolCount();
+  persistSettings();
+}
+
+function clearSelectedSymbols() {
+  if (!state.selected.size) {
+    toast('هیچ نمادی انتخاب نشده است.', 'info', 3000);
+    return;
+  }
+  const count = state.selected.size;
+  state.selected.clear();
+  renderSymbolList();
+  updateSymbolCount();
+  persistSettings();
+  toast(`${faDigits(count)} نماد از انتخاب خارج شد.`, 'ok', 3000);
 }
 
 function updateSymbolCount() {
@@ -553,6 +582,35 @@ function renderTable() {
 }
 
 /* ── دقت زمانی (روزانه / درون‌روزی) ──────────────────────── */
+const isIntradayResolution = (id) =>
+  (state.resolutions || []).some((r) => r.id === id && r.intraday);
+
+/**
+ * Picking an intraday resolution is the user asking for intraday data, but
+ * that data only exists from the moment recording starts - so start it here
+ * instead of leaving them on an empty report with one error per symbol.
+ * Also snaps the range to today, since older days cannot have samples yet.
+ */
+async function startRecordingForIntraday() {
+  const today = (state.presets || []).find((p) => p.id === '1');
+  if (today) {
+    state.preset = today.id;
+    $('startDate').value = faDigits(today.start);
+    $('endDate').value = faDigits(today.end);
+    renderPresets();
+  }
+
+  const toggle = $('intradayRecording');
+  const justEnabled = toggle && !toggle.checked;
+  if (justEnabled) toggle.checked = true;
+  await persistSettings();
+  if (justEnabled) {
+    toast('ثبت خودکار قیمت هر ۱۰ دقیقه روشن شد؛ داده از همین حالا جمع می‌شود.', 'info', 7000);
+  }
+  // One sample right now, so the very first intraday report is not empty.
+  await sampleNow({ quiet: true });
+}
+
 function renderResolutions() {
   const box = $('resolutionChips');
   if (!box) return;
@@ -563,14 +621,16 @@ function renderResolutions() {
     chip.type = 'button';
     chip.classList.toggle('is-active', state.resolution === res.id);
     chip.onclick = () => {
+      const wasIntraday = isIntradayResolution(state.resolution);
       state.resolution = res.id;
       renderResolutions();
       persistSettings();
+      if (!wasIntraday && isIntradayResolution(res.id)) startRecordingForIntraday();
     };
     box.appendChild(chip);
   });
 
-  const intraday = (state.resolutions || []).some((r) => r.id === state.resolution && r.intraday);
+  const intraday = isIntradayResolution(state.resolution);
   const hint = $('resolutionHint');
   if (hint) {
     hint.textContent = intraday
@@ -602,7 +662,7 @@ function renderIntraday(rows) {
   });
 }
 
-async function sampleNow() {
+async function sampleNow({ quiet = false } = {}) {
   if (state.busy) return;
   busy(true, 'در حال ثبت نمونه قیمت…');
   try {
@@ -613,9 +673,11 @@ async function sampleNow() {
     renderIntraday(payload.intraday);
     (payload.errors || []).forEach((error) => toast(error.message, 'error', 8000));
     const count = (payload.recorded || []).length;
-    if (count) {
+    // `quiet` is for the automatic first sample taken when the user switches
+    // to an intraday resolution - it already gets its own toast.
+    if (count && !quiet) {
       toast(`قیمت ${faDigits(count)} نماد ثبت شد.`, 'ok', 3500);
-    } else if (!(payload.errors || []).length) {
+    } else if (!count && !(payload.errors || []).length && !quiet) {
       toast('قیمت تازه‌ای برای ثبت نبود (همین ثانیه قبلاً ثبت شده).', 'info');
     }
   } catch (error) {
@@ -1017,8 +1079,10 @@ async function init() {
   $('fetchBtn').onclick = () => fetchSeries(false);
   $('refreshBtn').onclick = () => fetchSeries(true);
   $('crawlBtn').onclick = crawlNow;
-  $('sampleBtn').onclick = sampleNow;
+  $('sampleBtn').onclick = () => sampleNow();
   $('addSymbolBtn').onclick = addCustomSymbol;
+  $('selectVisibleBtn').onclick = selectVisibleSymbols;
+  $('clearSymbolsBtn').onclick = clearSelectedSymbols;
   $('fillGaps').onchange = persistSettings;
   $('autoCrawl').onchange = persistSettings;
   $('intradayRecording').onchange = persistSettings;
