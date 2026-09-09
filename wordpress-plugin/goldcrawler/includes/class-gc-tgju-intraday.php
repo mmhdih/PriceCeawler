@@ -92,6 +92,17 @@ final class GC_TGJU_Intraday {
                 'parser' => 'udf',
                 'referer' => 'https://www.tgju.org/',
             ),
+            // Last resort, but the one the site itself demonstrably uses for
+            // its intraday chart: the series is embedded in the page HTML.
+            array(
+                'name' => 'tgju-page',
+                'url' => 'https://www.tgju.org/profile/{symbol}',
+                'symbol_style' => 'key',
+                'parser' => 'page',
+                'referer' => 'https://www.tgju.org/',
+                'resolution_aware' => false,
+                'range_aware' => false,
+            ),
             array(
                 'name' => 'api-chart-intraday',
                 'url' => 'https://api.tgju.org/v1/market/indicator/chart-data/{symbol}?resolution={resolution}&from={from}&to={to}',
@@ -353,10 +364,98 @@ final class GC_TGJU_Intraday {
         return array_values($candles);
     }
 
-    private static function parse($endpoint, $payload, $symbol) {
-        return $endpoint['parser'] === 'rows'
-            ? self::parse_rows($payload, $symbol)
-            : self::parse_udf($payload, $symbol);
+    private static function parse($endpoint, $body, $symbol) {
+        if ($endpoint['parser'] === 'page') {
+            return self::parse_page($body, $symbol);
+        }
+        if ($endpoint['parser'] === 'rows') {
+            return self::parse_rows(self::decode_json($body), $symbol);
+        }
+        return self::parse_udf(self::decode_json($body), $symbol);
+    }
+
+    /**
+     * Extract an intraday series embedded in a TGJU profile page.
+     *
+     * The site's intraday chart ships its data inside the page HTML rather
+     * than fetching it over XHR (its Network panel stays empty while that
+     * chart draws), so the series has to be read out of the markup.
+     *
+     * Nothing here trusts a variable name or a script position - both change
+     * without notice. Every [[timestamp, price], ...] array in the document
+     * is collected and the longest genuinely intraday one wins, which is the
+     * series the chart draws.
+     */
+    public static function parse_page($html, $symbol) {
+        if (!is_string($html) || $html === '') {
+            throw new GC_TGJU_Intraday_Error('صفحه نماد TGJU خالی بازگشت.');
+        }
+        $divisor = GC_Symbols::divisor($symbol['currency']);
+        $best = array();
+
+        $pattern = '/\[\s*\[\s*\d{10,13}\s*,\s*-?\d+(?:\.\d+)?\s*\]'
+            . '(?:\s*,\s*\[\s*\d{10,13}\s*,\s*-?\d+(?:\.\d+)?\s*\])*\s*\]/';
+        if (preg_match_all($pattern, $html, $matches)) {
+            foreach ($matches[0] as $blob) {
+                $pairs = json_decode($blob, true);
+                if (!is_array($pairs)) {
+                    continue;
+                }
+                $candles = array();
+                foreach ($pairs as $pair) {
+                    if (!is_array($pair) || count($pair) < 2 || !is_numeric($pair[0])) {
+                        continue;
+                    }
+                    $ts = (int) $pair[0];
+                    if ($ts > 100000000000) {
+                        $ts = intdiv($ts, 1000);
+                    }
+                    $price = self::number($pair[1], $divisor);
+                    if ($ts <= 0 || $price === null) {
+                        continue;
+                    }
+                    // A page point carries one price, not an OHLC bar.
+                    $candles[$ts] = array('ts' => $ts, 'open' => $price,
+                        'high' => $price, 'low' => $price, 'close' => $price);
+                }
+                ksort($candles);
+                $rows = array_values($candles);
+                // Only an intraday series is useful; the same page also embeds
+                // a multi-year daily candlestick series, which must not win.
+                if (count($rows) > count($best) && self::is_intraday_spacing($rows)) {
+                    $best = $rows;
+                }
+            }
+        }
+        if ($best) {
+            return $best;
+        }
+
+        // Fall back to a UDF-shaped object embedded in the page.
+        if (preg_match_all('/\{[^{}]*"t"\s*:\s*\[[^\]]*\][^{}]*\}/', $html, $objects)) {
+            foreach ($objects[0] as $blob) {
+                $payload = json_decode($blob, true);
+                if (!is_array($payload)) {
+                    continue;
+                }
+                try {
+                    $rows = self::parse_udf($payload, $symbol);
+                } catch (GC_TGJU_Intraday_Error $exc) {
+                    continue;
+                }
+                if (count($rows) > count($best)) {
+                    $best = $rows;
+                }
+            }
+        }
+        if ($best) {
+            return $best;
+        }
+
+        throw new GC_TGJU_Intraday_Error(
+            'در صفحه این نماد هیچ سری زمانی درون‌روزی پیدا نشد؛ ممکن است ساختار'
+            . ' صفحه عوض شده باشد.'
+        );
     }
 
     // -- network ---------------------------------------------------------------
@@ -379,12 +478,19 @@ final class GC_TGJU_Intraday {
         return $windows;
     }
 
+    /**
+     * Fetch a URL and return the body as text.
+     *
+     * Text, not decoded JSON: one provider reads an HTML page, so the
+     * transport cannot assume the payload is JSON. Each parser decodes what
+     * it expects.
+     */
     private static function request($url, $referer) {
         $response = wp_remote_get($url, array(
             'timeout' => self::TIMEOUT,
             'headers' => array(
                 'X-Requested-With' => 'XMLHttpRequest',
-                'Accept' => 'application/json, text/javascript, */*; q=0.01',
+                'Accept' => 'application/json, text/javascript, text/html, */*; q=0.01',
                 'Accept-Language' => 'fa,en;q=0.8',
                 'Referer' => $referer,
             ),
@@ -396,7 +502,11 @@ final class GC_TGJU_Intraday {
         if ($code < 200 || $code >= 300) {
             throw new GC_TGJU_Intraday_Error("سرویس نمودار TGJU کد {$code} برگرداند.");
         }
-        $decoded = json_decode(wp_remote_retrieve_body($response), true);
+        return (string) wp_remote_retrieve_body($response);
+    }
+
+    private static function decode_json($body) {
+        $decoded = json_decode($body, true);
         if (!is_array($decoded)) {
             throw new GC_TGJU_Intraday_Error('پاسخ سرویس نمودار TGJU یک JSON معتبر نبود.');
         }
@@ -457,7 +567,12 @@ final class GC_TGJU_Intraday {
 
     private static function fetch_one($endpoint, $symbol, $resolution, $from, $to) {
         $candles = array();
-        foreach (self::windows($from, $to, self::MAX_SPAN_SECONDS) as $window) {
+        // A source that ignores the range (an HTML page carries whatever it
+        // carries) is fetched once, not once per window.
+        $windows = (isset($endpoint['range_aware']) && !$endpoint['range_aware'])
+            ? array(array($from, $to))
+            : self::windows($from, $to, self::MAX_SPAN_SECONDS);
+        foreach ($windows as $window) {
             $url = self::build_url($endpoint, $symbol['key'], $resolution, $window[0], $window[1]);
             $payload = self::request($url, $endpoint['referer']);
             foreach (self::parse($endpoint, $payload, $symbol) as $candle) {
@@ -486,7 +601,11 @@ final class GC_TGJU_Intraday {
         $saw_daily = false;
 
         foreach ($endpoints as $endpoint) {
-            foreach ($resolutions as $resolution) {
+            // A source that ignores {resolution} is asked once; trying every
+            // code against it would just fetch the same page many times.
+            $codes = (isset($endpoint['resolution_aware']) && !$endpoint['resolution_aware'])
+                ? array_slice($resolutions, 0, 1) : $resolutions;
+            foreach ($codes as $resolution) {
                 try {
                     $candles = self::fetch_one($endpoint, $symbol, $resolution, $from, $to);
                 } catch (GC_TGJU_Intraday_Error $exc) {
@@ -540,7 +659,9 @@ final class GC_TGJU_Intraday {
         $report = array();
 
         foreach (self::candidates() as $endpoint) {
-            foreach (self::NATIVE_RESOLUTIONS as $resolution) {
+            $codes = (isset($endpoint['resolution_aware']) && !$endpoint['resolution_aware'])
+                ? array_slice(self::NATIVE_RESOLUTIONS, 0, 1) : self::NATIVE_RESOLUTIONS;
+            foreach ($codes as $resolution) {
                 $row = array(
                     'endpoint' => $endpoint['name'],
                     'resolution' => $resolution,

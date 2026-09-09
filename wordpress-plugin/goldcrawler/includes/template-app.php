@@ -90,25 +90,23 @@ if (!defined('ABSPATH')) { exit; }
       <div class="block__head"><h2>دقت زمانی</h2></div>
       <div class="chips" id="resolutionChips"></div>
       <p class="hint" id="resolutionHint"></p>
-      <button class="btn btn--soft" id="probeBtn" type="button">بررسی سرویس درون‌روزی TGJU</button>
-      <p class="hint" id="probeResult" hidden></p>
+      <!-- Scheduled recording and the endpoint probe are site-wide decisions,
+           so they live in the admin screen and are shown here only to an
+           administrator. A licensed viewer sees the resolution picker only. -->
+      <div id="intradayAdmin" hidden>
+        <button class="btn btn--soft" id="probeBtn" type="button">بررسی سرویس درون‌روزی TGJU</button>
+        <p class="hint" id="probeResult" hidden></p>
 
-      <details class="custom-symbol">
-        <summary>ثبت محلی (اختیاری)</summary>
-        <div class="custom-symbol__body">
-          <p class="hint">اگر سرویس نمودار TGJU در دسترس نباشد، می‌توانید قیمت‌ها را روی همین هاست ثبت کنید. این کار داده گذشته را برنمی‌گرداند؛ فقط از لحظه روشن‌کردن به بعد ثبت می‌شود.</p>
-          <label class="switch" id="intradaySwitch">
-            <input type="checkbox" id="intradayRecording">
-            <span class="switch__track"><span class="switch__thumb"></span></span>
-            <span class="switch__label">
-              ثبت خودکار قیمت هر ۱۰ دقیقه
-              <small>داده‌های قدیمی‌تر از ۳۰ روز خودکار پاک می‌شوند.</small>
-            </span>
-          </label>
-          <button class="btn btn--soft" id="sampleBtn" type="button">ثبت نمونه همین حالا</button>
-          <div class="archive" id="intradayList"></div>
-        </div>
-      </details>
+        <details class="custom-symbol">
+          <summary>ثبت زمان‌بندی‌شده (مدیر)</summary>
+          <div class="custom-symbol__body">
+            <p class="hint">اگر سرویس نمودار TGJU برای نمادی داده ندارد، افزونه می‌تواند خودش هر ۱۰ دقیقه قیمت را ثبت کند. انتخاب نمادها و مدت نگهداری از پیشخوان انجام می‌شود: <b>GoldCrawler ← سرویس قیمت درون‌روزی</b>.</p>
+            <p class="hint" id="intradayScheduleState">—</p>
+            <button class="btn btn--soft" id="sampleBtn" type="button">ثبت نمونه همین حالا</button>
+            <div class="archive" id="intradayList"></div>
+          </div>
+        </details>
+      </div>
     </section>
 
     <section class="block">

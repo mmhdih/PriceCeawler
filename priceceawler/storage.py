@@ -136,6 +136,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # after a success so later requests do not re-try every spelling; the
     # granularity check still validates whatever comes back.
     "intraday_native": "",
+    # Which symbols the background sampler records; empty = the watched list.
+    "sampler_symbols": [],
+    # How many days of recorded samples to keep before pruning.
+    "retention_days": 30,
 }
 
 
@@ -155,6 +159,16 @@ class Settings:
 
     def as_dict(self) -> dict[str, Any]:
         return dict(self._data)
+
+    def retention_days(self) -> int:
+        """Retention window for recorded samples, clamped to something sane."""
+        try:
+            days = int(self.get("retention_days", 30))
+        except (TypeError, ValueError):
+            days = 30
+        # "keep nothing" would delete today's own samples; ten years is
+        # already far past any useful report.
+        return max(1, min(days, 3650))
 
     def update(self, values: dict[str, Any]) -> dict[str, Any]:
         with _lock:

@@ -27,11 +27,13 @@ one code path decides bucketing for both recorded and extracted data.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 from .symbols import Symbol
@@ -44,6 +46,7 @@ __all__ = [
     "fetch_candles",
     "parse_udf",
     "parse_rows",
+    "parse_page",
     "probe",
     "endpoints_from_setting",
     "resolutions_from_setting",
@@ -103,8 +106,13 @@ class Endpoint:
     name: str
     url: str
     symbol_style: str = "key"          # "key" | "upper" | "upper_underscore"
-    parser: str = "udf"                # "udf" | "rows"
+    parser: str = "udf"                # "udf" | "rows" | "page"
     referer: str = "https://www.tgju.org/"
+    # Whether the URL actually honours {resolution} / {from} / {to}. An HTML
+    # page does not, so it is fetched once instead of once per resolution and
+    # window - otherwise one report would pull the same page 16 times.
+    resolution_aware: bool = True
+    range_aware: bool = True
 
 
 # Ordered by how likely they are to be the live endpoint. `probe()` walks
@@ -136,6 +144,17 @@ CANDIDATES: tuple[Endpoint, ...] = (
             "?symbol={symbol}&resolution={resolution}&from={from}&to={to}"
         ),
         symbol_style="key",
+    ),
+    # Last resort, but the one the site itself demonstrably uses for its
+    # intraday chart: the series is embedded in the profile page HTML.
+    Endpoint(
+        name="tgju-page",
+        url="https://www.tgju.org/profile/{symbol}",
+        symbol_style="key",
+        parser="page",
+        referer="https://www.tgju.org/",
+        resolution_aware=False,
+        range_aware=False,
     ),
     Endpoint(
         name="api-chart-intraday",
@@ -330,22 +349,112 @@ def parse_rows(payload: Any, symbol: Symbol) -> list[Candle]:
     return candles
 
 
-_PARSERS: dict[str, Callable[[Any, Symbol], list[Candle]]] = {
-    "udf": parse_udf,
-    "rows": parse_rows,
-}
+# An embedded Highcharts/ApexCharts series looks like
+#   [[1757041200000, 23518800], [1757041800000, 23520000], ...]
+# so find every such array of [timestamp, number] pairs. The timestamp is
+# 10 digits (seconds) or 13 (milliseconds).
+_PAIR_ARRAY_RE = re.compile(
+    r"\[\s*\[\s*\d{10,13}\s*,\s*-?\d+(?:\.\d+)?\s*\]"
+    r"(?:\s*,\s*\[\s*\d{10,13}\s*,\s*-?\d+(?:\.\d+)?\s*\])*\s*\]"
+)
+
+# The other common embedding is a UDF-shaped object sitting in the page.
+_UDF_OBJECT_RE = re.compile(
+    r'\{[^{}]*"t"\s*:\s*\[[^\]]*\][^{}]*\}'
+)
+
+
+def parse_page(html: str, symbol: Symbol) -> list[Candle]:
+    """Extract an intraday series embedded in a TGJU profile page.
+
+    The site's intraday chart ships its data inside the page HTML rather than
+    fetching it over XHR (the Network panel stays empty while that chart
+    draws), so the series has to be read out of the markup.
+
+    Nothing here trusts a variable name or a script position - both are the
+    kind of detail that changes without notice. Instead every
+    ``[[timestamp, price], ...]`` array in the document is collected and the
+    longest genuinely intraday one wins, which is the series the chart draws.
+    """
+    if not isinstance(html, str) or not html:
+        raise TgjuError("صفحه نماد TGJU خالی بازگشت.")
+
+    divisor = symbol.divisor
+    best: list[Candle] = []
+
+    for match in _PAIR_ARRAY_RE.finditer(html):
+        try:
+            pairs = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            continue
+        candles: dict[int, Candle] = {}
+        for pair in pairs:
+            if not isinstance(pair, list) or len(pair) < 2:
+                continue
+            try:
+                ts = int(pair[0])
+            except (TypeError, ValueError):
+                continue
+            if ts > 100_000_000_000:
+                ts //= 1000
+            price = _number(pair[1], divisor)
+            if ts <= 0 or price is None:
+                continue
+            # A page series carries one price per point, not an OHLC bar.
+            candles[ts] = Candle(ts, price, price, price, price)
+        rows = [candles[ts] for ts in sorted(candles)]
+        # Only an intraday series is useful here; the same page also embeds a
+        # multi-year daily candlestick series, which must not win.
+        if len(rows) > len(best) and is_intraday_spacing(rows):
+            best = rows
+
+    if best:
+        return best
+
+    # Fall back to a UDF-shaped object embedded in the page.
+    for match in _UDF_OBJECT_RE.finditer(html):
+        try:
+            payload = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            continue
+        try:
+            rows = parse_udf(payload, symbol)
+        except TgjuError:
+            continue
+        if len(rows) > len(best):
+            best = rows
+    if best:
+        return best
+
+    raise TgjuError(
+        "در صفحه این نماد هیچ سری زمانی درون‌روزی پیدا نشد؛ ممکن است ساختار"
+        " صفحه عوض شده باشد."
+    )
+
+
+def _parse_body(parser: str, body: str, symbol: Symbol) -> list[Candle]:
+    if parser == "page":
+        return parse_page(body, symbol)
+    if parser == "rows":
+        return parse_rows(_decode_json(body), symbol)
+    return parse_udf(_decode_json(body), symbol)
 
 
 # -- network ------------------------------------------------------------------
 
 
-def _request(url: str, referer: str, timeout: float, opener=None) -> Any:
+def _request(url: str, referer: str, timeout: float, opener=None) -> str:
+    """Fetch a URL and return the body as text.
+
+    Text, not parsed JSON: one provider reads an HTML page, so the transport
+    cannot assume the payload is JSON. Each parser decodes what it expects.
+    """
     request = urllib.request.Request(
         url,
         headers={
             "User-Agent": _USER_AGENT,
             "X-Requested-With": "XMLHttpRequest",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept": "application/json, text/javascript, text/html, */*; q=0.01",
             "Accept-Language": "fa,en;q=0.8",
             "Referer": referer,
         },
@@ -353,8 +462,12 @@ def _request(url: str, referer: str, timeout: float, opener=None) -> Any:
     open_url = opener or urllib.request.urlopen
     with open_url(request, timeout=timeout) as response:
         raw = response.read()
+    return raw.decode("utf-8", errors="replace")
+
+
+def _decode_json(body: str) -> Any:
     try:
-        return json.loads(raw.decode("utf-8", errors="replace"))
+        return json.loads(body)
     except json.JSONDecodeError as exc:
         raise TgjuError("پاسخ سرویس نمودار TGJU یک JSON معتبر نبود.") from exc
 
@@ -415,12 +528,18 @@ def is_intraday_spacing(candles: Sequence[Candle]) -> bool:
 
 def _fetch_one(endpoint: Endpoint, symbol: Symbol, resolution: str,
                from_ts: int, to_ts: int, *, timeout: float, opener=None) -> list[Candle]:
-    parser = _PARSERS.get(endpoint.parser, parse_udf)
     candles: dict[int, Candle] = {}
-    for window_from, window_to in _windows(from_ts, to_ts, MAX_SPAN_SECONDS):
+    # A source that ignores the range (an HTML page carries whatever it
+    # carries) must be fetched once, not once per window.
+    windows = (
+        _windows(from_ts, to_ts, MAX_SPAN_SECONDS)
+        if endpoint.range_aware
+        else ((from_ts, to_ts),)
+    )
+    for window_from, window_to in windows:
         url = _build_url(endpoint, symbol, resolution, window_from, window_to)
-        payload = _request(url, endpoint.referer, timeout, opener)
-        for candle in parser(payload, symbol):
+        body = _request(url, endpoint.referer, timeout, opener)
+        for candle in _parse_body(endpoint.parser, body, symbol):
             if from_ts <= candle.ts <= to_ts:
                 candles[candle.ts] = candle
     return [candles[ts] for ts in sorted(candles)]
@@ -448,7 +567,10 @@ def fetch_candles(
     attempts: list[str] = []
     saw_daily = False
     for endpoint in (endpoints or CANDIDATES):
-        for resolution in resolutions:
+        # A source that ignores {resolution} is asked once; trying 16 codes
+        # against it would just fetch the same page 16 times.
+        codes = resolutions if endpoint.resolution_aware else resolutions[:1]
+        for resolution in codes:
             try:
                 candles = _fetch_one(
                     endpoint, symbol, resolution, from_ts, to_ts,
@@ -486,8 +608,27 @@ def fetch_candles(
     )
 
 
+def _dump_body(dump_dir: str, endpoint: Endpoint, resolution: str, url: str,
+               timeout: float, opener=None) -> str:
+    """Write one raw response to a file and return its path (or the error).
+
+    Diagnostics only: when an extractor finds nothing, the raw body is the
+    ground truth needed to write a correct parser.
+    """
+    directory = Path(dump_dir)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        body = _request(url, endpoint.referer, timeout, opener)
+        suffix = "html" if endpoint.parser == "page" else "json"
+        path = directory / f"{endpoint.name}-{resolution}.{suffix}"
+        path.write_text(body, encoding="utf-8")
+        return str(path)
+    except Exception as exc:  # a dump must never break the probe
+        return f"ذخیره نشد: {type(exc).__name__}: {exc}"
+
+
 def probe(symbol: Symbol, *, hours: int = 48, timeout: float = 15.0,
-          opener=None) -> list[dict[str, Any]]:
+          opener=None, dump_dir: str | None = None) -> list[dict[str, Any]]:
     """Try every candidate endpoint and report what each one did.
 
     This is the diagnostic behind the ``probe-intraday`` command: it turns
@@ -499,7 +640,8 @@ def probe(symbol: Symbol, *, hours: int = 48, timeout: float = 15.0,
     report: list[dict[str, Any]] = []
 
     for endpoint in CANDIDATES:
-        for resolution in NATIVE_RESOLUTIONS:
+        codes = NATIVE_RESOLUTIONS if endpoint.resolution_aware else NATIVE_RESOLUTIONS[:1]
+        for resolution in codes:
             row: dict[str, Any] = {
                 "endpoint": endpoint.name,
                 "resolution": resolution,
@@ -509,6 +651,12 @@ def probe(symbol: Symbol, *, hours: int = 48, timeout: float = 15.0,
                 # missing the verdict callers read.
                 "ok": False,
             }
+            if dump_dir:
+                # Save the raw body so a parser can be written against what
+                # the server really sends, instead of against a guess.
+                row["dump"] = _dump_body(
+                    dump_dir, endpoint, resolution, row["url"], timeout, opener
+                )
             try:
                 candles = _fetch_one(
                     endpoint, symbol, resolution, from_ts, to_ts,

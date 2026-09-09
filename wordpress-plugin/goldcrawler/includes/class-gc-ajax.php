@@ -45,6 +45,16 @@ final class GC_Ajax {
         return GC_License::current_user_allowed();
     }
 
+    /** Stops a licensed-but-not-admin user from taking an admin action. */
+    private static function require_admin() {
+        if (!current_user_can(GC_License::MANAGE_CAPABILITY)) {
+            wp_send_json_error(
+                array('message' => 'این بخش فقط برای مدیران سایت است.'),
+                403
+            );
+        }
+    }
+
     private static function guard() {
         if (!self::can_use()) {
             wp_send_json_error(array('message' => 'شما اجازه دسترسی به این ابزار را ندارید.'), 403);
@@ -111,7 +121,8 @@ final class GC_Ajax {
             'presets' => GC_Report::range_presets($today),
             'resolutions' => GC_Intraday::resolutions(),
             'intraday' => GC_Intraday::summary(),
-            'intradayRetentionDays' => GC_Intraday::RETENTION_DAYS,
+            'intradayRetentionDays' => GC_Storage::retention_days(),
+            'isAdmin' => current_user_can(GC_License::MANAGE_CAPABILITY),
         ));
     }
 
@@ -213,12 +224,17 @@ final class GC_Ajax {
 
     public static function handle_settings() {
         self::guard();
-        $settings = GC_Storage::update_settings(self::body());
+        // Any licensed user may save their own report preferences, but the
+        // site-wide ones (what the scheduler records, how long data is kept,
+        // where it comes from) are administrators-only. Non-admin values for
+        // those keys are dropped, not honoured.
+        $is_admin = current_user_can(GC_License::MANAGE_CAPABILITY);
+        $settings = GC_Storage::update_settings(self::body(), $is_admin);
         // Recording is what creates the 10-minute background job, so the
         // schedule has to follow the setting immediately - otherwise turning
         // it off would leave the cron sampling forever.
         GC_Sampler::sync_schedule(!empty($settings['intraday_recording']));
-        wp_send_json_success(array('settings' => $settings));
+        wp_send_json_success(array('settings' => $settings, 'isAdmin' => $is_admin));
     }
 
     /** Records one intraday sample right now ("ثبت نمونه همین حالا"). */
@@ -230,6 +246,7 @@ final class GC_Ajax {
      */
     public static function handle_probe() {
         self::guard();
+        self::require_admin();
         $payload = self::body();
         $keys = !empty($payload['symbols']) ? $payload['symbols'] : null;
         wp_send_json_success(GC_Crawler::probe_intraday($keys));
@@ -237,6 +254,9 @@ final class GC_Ajax {
 
     public static function handle_sample() {
         self::guard();
+        // Writing into the site's shared sample store is an administrative
+        // action: it decides what data the whole site accumulates.
+        self::require_admin();
         $payload = self::body();
         $keys = !empty($payload['symbols']) ? $payload['symbols'] : null;
         $result = GC_Sampler::sample_now($keys);

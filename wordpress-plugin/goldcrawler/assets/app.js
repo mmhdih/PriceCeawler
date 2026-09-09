@@ -30,6 +30,7 @@ const state = {
   chartMode: 'percent',
   hidden: new Set(),
   busy: false,
+  isAdmin: false,
   resolutions: [],
   resolution: 'daily',
 };
@@ -748,7 +749,6 @@ async function persistSettings() {
         end: dates.end,
         fill_gaps: $('fillGaps').checked,
         auto_crawl: $('autoCrawl').checked,
-        intraday_recording: $('intradayRecording').checked,
         resolution: state.resolution,
         theme: ROOT.dataset.theme,
       },
@@ -939,8 +939,20 @@ async function init() {
   $('todayPill').textContent = meta.todayLong;
   $('fillGaps').checked = settings.fill_gaps !== false;
   $('autoCrawl').checked = settings.auto_crawl !== false;
-  $('intradayRecording').checked = !!settings.intraday_recording;
   state.resolution = settings.resolution || 'daily';
+
+  // Scheduled recording, the endpoint probe and retention are site-wide and
+  // administrator-only; a licensed viewer just picks a resolution.
+  state.isAdmin = meta.isAdmin === true;
+  const adminBox = $('intradayAdmin');
+  if (adminBox) adminBox.hidden = !state.isAdmin;
+  const scheduleState = $('intradayScheduleState');
+  if (scheduleState) {
+    const count = (settings.sampler_symbols || []).length;
+    scheduleState.textContent = settings.intraday_recording === true
+      ? `ثبت زمان‌بندی‌شده روشن است — ${faDigits(count)} نماد، نگهداری ${faDigits(meta.intradayRetentionDays || 30)} روز.`
+      : 'ثبت زمان‌بندی‌شده خاموش است.';
+  }
 
   (settings.symbols || []).forEach((key) => state.selected.add(key));
   state.preset = settings.range_preset || '30';
@@ -970,9 +982,9 @@ async function init() {
   $('clearSymbolsBtn').onclick = clearSelectedSymbols;
   $('fillGaps').onchange = persistSettings;
   $('autoCrawl').onchange = persistSettings;
-  $('intradayRecording').onchange = persistSettings;
-  $('sampleBtn').onclick = () => sampleNow();
-  $('probeBtn').onclick = probeIntraday;
+  // These exist only for an administrator (see #intradayAdmin in the template).
+  if ($('sampleBtn')) $('sampleBtn').onclick = () => sampleNow();
+  if ($('probeBtn')) $('probeBtn').onclick = probeIntraday;
   ['startDate', 'endDate'].forEach((id) => {
     $(id).addEventListener('change', () => {
       state.preset = 'custom';

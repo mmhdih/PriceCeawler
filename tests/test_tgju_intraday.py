@@ -134,6 +134,114 @@ class TestParseRows(unittest.TestCase):
         self.assertEqual(len(ti.parse_rows(payload, OUNCE)), 1)
 
 
+class TestParsePage(unittest.TestCase):
+    """The site embeds its intraday series in the profile page HTML.
+
+    Its Network panel stays empty while the intraday chart draws, so there is
+    no XHR to call - the series has to be read out of the markup.
+    """
+
+    # A Tehran-morning timestamp in milliseconds, as Highcharts uses.
+    BASE_MS = 1757041200000
+    BASE = 1757041200
+
+    def series(self, count=6, step_ms=600_000, start_ms=None, price=235_188_000):
+        start = self.BASE_MS if start_ms is None else start_ms
+        return [[start + i * step_ms, price + i * 1000] for i in range(count)]
+
+    def page(self, *arrays, extra=""):
+        blocks = "".join(
+            f'<script>var s{i} = {{"name":"امروز","data":{json.dumps(a)}}};</script>'
+            for i, a in enumerate(arrays)
+        )
+        return f"<html><head><title>x</title></head><body>{blocks}{extra}</body></html>"
+
+    def test_an_embedded_series_is_extracted(self):
+        candles = ti.parse_page(self.page(self.series()), GOLD)
+        self.assertEqual(len(candles), 6)
+        # Milliseconds become seconds, and rial becomes toman.
+        self.assertEqual(candles[0].ts, self.BASE)
+        self.assertEqual(candles[0].close, 23_518_800)
+
+    def test_a_page_point_has_no_real_ohlc_so_all_four_match(self):
+        candle = ti.parse_page(self.page(self.series()), GOLD)[0]
+        self.assertEqual(
+            (candle.open, candle.high, candle.low, candle.close),
+            (candle.close,) * 4,
+        )
+
+    def test_the_multi_year_daily_series_on_the_same_page_never_wins(self):
+        """The profile page also embeds a 13-year daily candlestick series."""
+        daily = [[(1757030400 + i * 86400) * 1000, 100_000_000 + i] for i in range(400)]
+        intraday = self.series(8)
+        candles = ti.parse_page(self.page(daily, intraday), GOLD)
+        # The long daily array must lose to the short intraday one.
+        self.assertEqual(len(candles), 8)
+        self.assertTrue(ti.is_intraday_spacing(candles))
+
+    def test_the_longest_intraday_series_wins(self):
+        short = self.series(4)
+        long = self.series(40, start_ms=self.BASE_MS + 60_000)
+        candles = ti.parse_page(self.page(short, long), GOLD)
+        self.assertEqual(len(candles), 40)
+
+    def test_second_level_timestamps_are_accepted_too(self):
+        seconds = [[self.BASE + i * 600, 235_188_000] for i in range(5)]
+        candles = ti.parse_page(self.page(seconds), GOLD)
+        self.assertEqual(candles[0].ts, self.BASE)
+
+    def test_dollar_symbols_are_not_divided(self):
+        page = self.page([[self.BASE_MS + i * 600_000, 3301] for i in range(5)])
+        self.assertEqual(ti.parse_page(page, OUNCE)[0].close, 3301)
+
+    def test_a_udf_object_embedded_in_the_page_is_a_fallback(self):
+        times = [self.BASE + i * 600 for i in range(5)]
+        blob = json.dumps({"s": "ok", "t": times, "c": [235_188_000] * 5})
+        page = f"<html><body><script>window.chart = {blob};</script></body></html>"
+        candles = ti.parse_page(page, GOLD)
+        self.assertEqual(len(candles), 5)
+        self.assertEqual(candles[0].close, 23_518_800)
+
+    def test_a_page_without_any_series_says_the_layout_changed(self):
+        with self.assertRaises(TgjuError) as caught:
+            ti.parse_page("<html><body><p>قیمت طلا</p></body></html>", GOLD)
+        self.assertIn("ساختار", str(caught.exception))
+
+    def test_an_empty_body_is_rejected(self):
+        with self.assertRaises(TgjuError):
+            ti.parse_page("", GOLD)
+
+    def test_junk_pairs_inside_a_series_are_skipped(self):
+        page = self.page([[self.BASE_MS, 0], [self.BASE_MS + 600_000, 235_188_000],
+                          [self.BASE_MS + 1_200_000, 235_200_000]])
+        candles = ti.parse_page(page, GOLD)
+        # The zero price is not an observation.
+        self.assertEqual(len(candles), 2)
+
+    def test_the_page_source_is_fetched_once_not_per_resolution(self):
+        calls: list[str] = []
+        page = self.page(self.series(20))
+
+        def opener(request, timeout=None):
+            calls.append(request.full_url)
+            return FakeResponse(page.encode("utf-8"))
+
+        page_only = tuple(e for e in ti.CANDIDATES if e.name == "tgju-page")
+        candles, endpoint, _ = ti.fetch_candles(
+            GOLD, self.BASE - 3600, self.BASE + 4 * 3600,
+            endpoints=page_only, opener=opener,
+        )
+        self.assertEqual(endpoint.name, "tgju-page")
+        self.assertEqual(len(calls), 1, "one page fetch, not one per resolution")
+        self.assertTrue(candles)
+
+    def test_the_page_url_carries_the_symbol_key(self):
+        endpoint = next(e for e in ti.CANDIDATES if e.name == "tgju-page")
+        url = ti._build_url(endpoint, GOLD, "1", 100, 200)
+        self.assertTrue(url.endswith("/profile/geram18"))
+        self.assertNotIn("{", url)
+
+
 class TestEndpointSelection(unittest.TestCase):
     def test_no_pin_tries_every_candidate(self):
         self.assertEqual(ti.endpoints_from_setting(""), ti.CANDIDATES)
@@ -412,14 +520,39 @@ class TestProbe(unittest.TestCase):
         self.assertTrue(working["ok"])
         self.assertTrue(working["intraday"])
 
+    def test_dump_writes_each_raw_body_to_a_file(self):
+        """The raw body is the ground truth for writing a correct parser."""
+        import pathlib
+        import tempfile
+
+        out = tempfile.mkdtemp(prefix="pc-dump-")
+        report = ti.probe(GOLD, opener=in_window_opener("platform.tgju.org"),
+                          dump_dir=out)
+        dumps = [row["dump"] for row in report if row.get("dump")]
+        self.assertTrue(dumps)
+        written = [d for d in dumps if not d.startswith("ذخیره نشد")]
+        self.assertTrue(written, f"no body written: {dumps}")
+        self.assertTrue(pathlib.Path(written[0]).is_file())
+        self.assertIn('"s"', pathlib.Path(written[0]).read_text(encoding="utf-8"))
+
+    def test_a_dump_failure_never_breaks_the_probe(self):
+        report = ti.probe(GOLD, opener=opener_for({}), dump_dir="/proc/nope/nope")
+        self.assertTrue(report)
+        self.assertTrue(all(row["dump"].startswith("ذخیره نشد") for row in report))
+
     def test_probe_reports_failures_instead_of_raising(self):
         opener = opener_for({})
         report = ti.probe(GOLD, opener=opener)
         self.assertTrue(report)
         self.assertTrue(all(not row["ok"] for row in report))
         self.assertTrue(all("error" in row for row in report))
-        # Every candidate/resolution pair is accounted for.
-        self.assertEqual(len(report), len(ti.CANDIDATES) * len(ti.NATIVE_RESOLUTIONS))
+        # Every candidate is accounted for; a source that ignores
+        # {resolution} is asked once instead of once per code.
+        expected = sum(
+            len(ti.NATIVE_RESOLUTIONS) if endpoint.resolution_aware else 1
+            for endpoint in ti.CANDIDATES
+        )
+        self.assertEqual(len(report), expected)
 
 
 if __name__ == "__main__":

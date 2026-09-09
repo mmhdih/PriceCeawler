@@ -6,6 +6,9 @@ require __DIR__ . '/../includes/class-gc-license.php';
 require __DIR__ . '/../includes/class-gc-symbols.php';
 require __DIR__ . '/../includes/class-gc-storage.php';
 require __DIR__ . '/../includes/class-gc-crawler.php';
+require __DIR__ . '/../includes/class-gc-intraday.php';
+require __DIR__ . '/../includes/class-gc-tgju-intraday.php';
+require __DIR__ . '/../includes/class-gc-sampler.php';
 require __DIR__ . '/../includes/class-gc-admin.php';
 
 $failures = 0; $checks = 0;

@@ -239,6 +239,42 @@ final class GC_Admin {
             $source = 'auto';
         }
 
+        // Scheduled recording: which symbols, and for how long to keep them.
+        // Both are site-wide, so both live here and nowhere else.
+        $recording = !empty($_POST['goldcrawler_intraday_recording']);
+
+        $known = array();
+        foreach (GC_Crawler::known_symbols() as $symbol) {
+            $known[$symbol['key']] = true;
+        }
+        $sampler = array();
+        if (isset($_POST['goldcrawler_sampler_symbols'])) {
+            foreach ((array) $_POST['goldcrawler_sampler_symbols'] as $key) {
+                $key = sanitize_text_field(wp_unslash($key));
+                // Only real symbols: an unknown key would make the cron fetch
+                // a URL that can never resolve, on every fire, forever.
+                if (isset($known[$key])) {
+                    $sampler[$key] = true;
+                }
+            }
+        }
+        $sampler = array_keys($sampler);
+
+        $retention = isset($_POST['goldcrawler_retention_days'])
+            ? (int) $_POST['goldcrawler_retention_days'] : 30;
+        if ($retention < 1 || $retention > 3650) {
+            return array(
+                'type' => 'error',
+                'text' => 'مدت نگهداری باید بین ۱ و ۳۶۵۰ روز باشد.',
+            );
+        }
+        if ($recording && !$sampler) {
+            return array(
+                'type' => 'error',
+                'text' => 'برای ثبت زمان‌بندی‌شده باید حداقل یک نماد را انتخاب کنید.',
+            );
+        }
+
         // A URL template, not a plain URL: esc_url_raw would strip the braces
         // our four placeholders need, so validate the shape by hand instead.
         $endpoint = isset($_POST['goldcrawler_intraday_endpoint'])
@@ -264,8 +300,22 @@ final class GC_Admin {
         GC_Storage::update_settings(array(
             'intraday_source' => $source,
             'intraday_endpoint' => $endpoint,
+            'intraday_recording' => $recording,
+            'sampler_symbols' => $sampler,
+            'retention_days' => $retention,
         ));
-        return array('type' => 'success', 'text' => 'تنظیمات سرویس درون‌روزی ذخیره شد.');
+        // The 10-minute job must follow the setting immediately, or turning
+        // recording off would leave the cron sampling forever.
+        GC_Sampler::sync_schedule($recording);
+
+        $text = 'تنظیمات درون‌روزی ذخیره شد.';
+        if ($recording) {
+            $text .= ' ثبت زمان‌بندی‌شده برای ' . count($sampler)
+                . ' نماد روشن است و داده تا ' . $retention . ' روز نگه داشته می‌شود.';
+        } else {
+            $text .= ' ثبت زمان‌بندی‌شده خاموش است.';
+        }
+        return array('type' => 'success', 'text' => $text);
     }
 
     /** Runs the endpoint probe and reports the result inline. */
@@ -407,6 +457,62 @@ final class GC_Admin {
             . ' <code dir="ltr">{symbol}</code>، <code dir="ltr">{resolution}</code>،'
             . ' <code dir="ltr">{from}</code> و <code dir="ltr">{to}</code>.<br>نمونه:'
             . ' <code dir="ltr">https://platform.tgju.org/fa/tvdata/history?symbol={symbol}&amp;resolution={resolution}&amp;from={from}&amp;to={to}</code></p>';
+        echo '</td></tr>';
+        echo '</tbody></table>';
+
+        // -- scheduled recording (administrators only) ---------------------
+        $recording = !empty($settings['intraday_recording']);
+        $chosen = GC_Sampler::scheduled_symbols($settings);
+        $chosen_map = array();
+        foreach ($chosen as $key) {
+            $chosen_map[$key] = true;
+        }
+        $retention = GC_Storage::retention_days();
+
+        echo '<h3>ثبت زمان‌بندی‌شده (فقط مدیر کل)</h3>';
+        echo '<p class="description">اگر سرویس درون‌روزی TGJU برای نمادی داده ندارد،'
+            . ' افزونه می‌تواند خودش هر ۱۰ دقیقه قیمت را بخواند و ذخیره کند تا کم‌کم'
+            . ' سابقه درون‌روزی ساخته شود. این تصمیم سایت‌گستر است و فقط از همین صفحه'
+            . ' قابل تغییر است — کاربران ابزار به آن دسترسی ندارند.</p>';
+
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th scope="row">ثبت خودکار</th><td>';
+        echo '<label><input type="checkbox" name="goldcrawler_intraday_recording" value="1"'
+            . checked($recording, true, false) . '> هر ۱۰ دقیقه قیمت نمادهای انتخابی زیر را ثبت کن</label>';
+        echo '<p class="description">با خاموش‌کردن این گزینه، وظیفه زمان‌بندی‌شده وردپرس'
+            . ' هم پاک می‌شود و هیچ کار پس‌زمینه‌ای باقی نمی‌ماند.</p>';
+        echo '</td></tr>';
+
+        echo '<tr><th scope="row">نمادهایی که ثبت شوند</th><td>';
+        echo '<div style="max-height:260px;overflow:auto;border:1px solid #dcdcde;'
+            . 'padding:8px;background:#fff;max-width:640px">';
+        $group = null;
+        foreach (GC_Crawler::known_symbols() as $symbol) {
+            if ($symbol['group'] !== $group) {
+                $group = $symbol['group'];
+                echo '<p style="margin:8px 0 4px;font-weight:600">' . esc_html($group) . '</p>';
+            }
+            echo '<label style="display:block;padding:2px 0">'
+                . '<input type="checkbox" name="goldcrawler_sampler_symbols[]" value="'
+                . esc_attr($symbol['key']) . '"'
+                . checked(isset($chosen_map[$symbol['key']]), true, false) . '> '
+                . esc_html($symbol['name'])
+                . ' <code>' . esc_html($symbol['key']) . '</code></label>';
+        }
+        echo '</div>';
+        echo '<p class="description">هر نماد یک درخواست در هر بار اجراست، پس فقط'
+            . ' نمادهایی را انتخاب کنید که واقعاً سابقه درون‌روزی‌شان را می‌خواهید.'
+            . ' اگر هیچ‌کدام را انتخاب نکنید، فهرست نمادهای پیش‌فرض سایت ثبت می‌شود.</p>';
+        echo '</td></tr>';
+
+        echo '<tr><th scope="row"><label for="goldcrawler-retention">مدت نگهداری داده</label></th><td>';
+        echo '<input type="number" id="goldcrawler-retention" name="goldcrawler_retention_days"'
+            . ' min="1" max="3650" style="width:110px" value="' . esc_attr($retention) . '"> روز';
+        echo '<p class="description">داده‌های ثبت‌شده قدیمی‌تر از این مدت در هر بار اجرای'
+            . ' زمان‌بندی خودکار پاک می‌شوند. بین ۱ تا ۳۶۵۰ روز. هر نماد در هر روز حداکثر'
+            . ' ' . esc_html(GC_Intraday::MAX_SAMPLES_PER_DAY) . ' نمونه نگه می‌دارد، پس'
+            . ' حجم روی دیسک محدود می‌ماند؛ با این حال مدت طولانی برای نمادهای زیاد،'
+            . ' فضای بیشتری می‌گیرد.</p>';
         echo '</td></tr>';
         echo '</tbody></table>';
 

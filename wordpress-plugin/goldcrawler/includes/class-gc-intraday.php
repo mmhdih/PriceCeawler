@@ -38,7 +38,10 @@ final class GC_Intraday {
     /** Bucket width in seconds; 'tick' has none (one row per observed change). */
     const BUCKET_SECONDS = array(self::RES_10M => 600, self::RES_1H => 3600);
 
-    /** Day files older than this are pruned; keeps the uploads folder bounded. */
+    /**
+     * Default retention. The effective window is a setting an administrator
+     * controls (GC_Storage::retention_days()); this is only the fallback.
+     */
     const RETENTION_DAYS = 30;
 
     /** Hard cap per day file, so a runaway cron can never bloat one file. */
@@ -225,9 +228,14 @@ final class GC_Intraday {
     }
 
     /** Deletes day files older than RETENTION_DAYS. @return int files removed */
-    public static function prune($now = null) {
+    /**
+     * @param int|null $now  reference time (tests pin it)
+     * @param int|null $days retention window; defaults to the admin setting
+     */
+    public static function prune($now = null, $days = null) {
         $now = $now === null ? time() : (int) $now;
-        $cutoff = self::local_iso_date($now - (self::RETENTION_DAYS * 86400));
+        $days = $days === null ? GC_Storage::retention_days() : max(1, (int) $days);
+        $cutoff = self::local_iso_date($now - ($days * 86400));
         $removed = 0;
 
         foreach (glob(self::base_dir() . '/*', GLOB_ONLYDIR) ?: array() as $dir) {

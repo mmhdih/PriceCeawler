@@ -179,5 +179,33 @@ gc_check($removed >= 1, 'pruning removes day files older than the retention wind
 gc_check(GC_Intraday::load_samples('geram18', $old - 10, $old + 10) === array(), 'the pruned day is gone');
 gc_check(count(GC_Intraday::load_samples('geram18', $base - 10, $base + 10)) === 1, 'pruning leaves the in-window days untouched');
 
+
+// -- retention is an admin setting, not a constant --------------------------
+// The window is configurable, so pruning must follow the setting rather than
+// the class constant it defaults to.
+$gc_now = gmmktime(12, 0, 0, 8, 19, 2025);
+GC_Intraday::record('retention_test', 100, $gc_now);                 // today
+GC_Intraday::record('retention_test', 101, $gc_now - (5 * 86400));   // 5 days old
+GC_Intraday::record('retention_test', 102, $gc_now - (20 * 86400));  // 20 days old
+
+GC_Storage::update_settings(array('retention_days' => 7), true);
+GC_Intraday::prune($gc_now);
+$gc_left = GC_Intraday::load_samples('retention_test', $gc_now - (60 * 86400), $gc_now + 60);
+gc_check(count($gc_left) === 2, 'a 7-day retention keeps today and the 5-day-old sample');
+
+GC_Storage::update_settings(array('retention_days' => 3), true);
+GC_Intraday::prune($gc_now);
+$gc_left = GC_Intraday::load_samples('retention_test', $gc_now - (60 * 86400), $gc_now + 60);
+gc_check(count($gc_left) === 1, 'shortening retention to 3 days prunes the 5-day-old sample');
+gc_check(isset($gc_left[$gc_now]), "today's own sample survives the shortest retention");
+
+// An explicit override wins over the setting (tests and one-off cleanups).
+GC_Intraday::record('retention_test', 103, $gc_now - (2 * 86400));
+GC_Intraday::prune($gc_now, 1);
+$gc_left = GC_Intraday::load_samples('retention_test', $gc_now - (60 * 86400), $gc_now + 60);
+gc_check(count($gc_left) === 1, 'an explicit retention argument overrides the setting');
+
+GC_Storage::update_settings(array('retention_days' => 30), true);
+
 echo "checks: {$checks}, failures: {$failures}\n";
 exit($failures > 0 ? 1 : 0);

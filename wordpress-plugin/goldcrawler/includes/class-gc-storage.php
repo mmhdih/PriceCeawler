@@ -47,6 +47,12 @@ final class GC_Storage {
         // Pinned after a success so later requests do not re-try every
         // spelling; the granularity check still validates what comes back.
         'intraday_native' => '',
+        // Which symbols the scheduled recorder samples. Empty = the site's
+        // watched list. Admin-only, because it decides what the site's own
+        // cron does on every fire.
+        'sampler_symbols' => array(),
+        // How many days of recorded samples to keep before pruning.
+        'retention_days' => 30,
         'resolution' => 'daily',
         'last_sample' => 0,
     );
@@ -97,15 +103,62 @@ final class GC_Storage {
         return $settings;
     }
 
-    public static function update_settings($values) {
+    /**
+     * Settings only a site administrator may change.
+     *
+     * These are not per-user preferences: they decide what the site's own
+     * scheduler does, where data comes from, and how long it is kept. A
+     * licensed front-end user picking symbols for their own report must not
+     * be able to reach them.
+     */
+    const ADMIN_ONLY_SETTINGS = array(
+        'intraday_recording',
+        'sampler_symbols',
+        'retention_days',
+        'intraday_source',
+        'intraday_endpoint',
+        'intraday_native',
+        'auto_crawl',
+        'disabled_symbols',
+    );
+
+    public static function is_admin_only($key) {
+        return in_array($key, self::ADMIN_ONLY_SETTINGS, true);
+    }
+
+    /**
+     * @param array $values      settings to merge in
+     * @param bool  $is_admin    whether the caller may change admin-only keys;
+     *                           false silently drops them rather than failing
+     *                           the whole save, so a normal user's own
+     *                           preferences still persist.
+     */
+    public static function update_settings($values, $is_admin = true) {
         $settings = self::get_settings();
         foreach ($values as $key => $value) {
-            if (array_key_exists($key, self::$default_settings)) {
-                $settings[$key] = $value;
+            if (!array_key_exists($key, self::$default_settings)) {
+                continue;
             }
+            if (!$is_admin && self::is_admin_only($key)) {
+                continue;
+            }
+            $settings[$key] = $value;
         }
         self::write_json(self::base_dir() . '/settings.json', $settings);
         return $settings;
+    }
+
+    /** Retention window for recorded samples, clamped to something sane. */
+    public static function retention_days() {
+        $settings = self::get_settings();
+        $days = isset($settings['retention_days']) ? (int) $settings['retention_days'] : 30;
+        if ($days < 1) {
+            $days = 1;      // "keep nothing" would delete today's own samples
+        }
+        if ($days > 3650) {
+            $days = 3650;   // ten years is already far past any useful report
+        }
+        return $days;
     }
 
     // -- cache --------------------------------------------------------------

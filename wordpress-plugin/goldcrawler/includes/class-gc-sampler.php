@@ -76,13 +76,37 @@ final class GC_Sampler {
         if (empty($settings['intraday_recording'])) {
             return null;
         }
-        return self::sample_now($settings['symbols']);
+        // The scheduler records what the *administrator* chose, not whatever
+        // symbols a visitor last picked for their own report - those are two
+        // different decisions, and only one of them is site-wide.
+        return self::sample_now(self::scheduled_symbols($settings));
+    }
+
+    /**
+     * Symbol keys the scheduled recorder samples.
+     *
+     * Falls back to the site's watched list when the admin has not narrowed
+     * it, so enabling recording without touching anything else still works.
+     *
+     * @return string[]
+     */
+    public static function scheduled_symbols($settings = null) {
+        $settings = $settings === null ? GC_Storage::get_settings() : $settings;
+        $chosen = isset($settings['sampler_symbols']) ? (array) $settings['sampler_symbols'] : array();
+        // Trim before filtering: a whitespace-only key is not a symbol, and
+        // would make the cron request a nameless URL on every fire.
+        $chosen = array_map('trim', array_map('strval', $chosen));
+        $chosen = array_values(array_filter($chosen, 'strlen'));
+        if ($chosen) {
+            return $chosen;
+        }
+        return isset($settings['symbols']) ? (array) $settings['symbols'] : array();
     }
 
     /** @param string[]|null $keys symbols to sample; defaults to the watched list */
     public static function sample_now($keys = null) {
         $settings = GC_Storage::get_settings();
-        $keys = $keys ?: $settings['symbols'];
+        $keys = $keys ?: self::scheduled_symbols($settings);
 
         $recorded = array();
         $errors = array();

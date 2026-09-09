@@ -92,5 +92,36 @@ gc_check($result['recorded'] === array('price_dollar_rl'), 'sample_now() honours
 $dollar = GC_Intraday::load_samples('price_dollar_rl', $now - 120, time() + 120);
 gc_check(reset($dollar) === 90000.0, 'the explicitly sampled symbol stored its own price');
 
+
+// -- the scheduler records what the ADMIN chose -----------------------------
+// A visitor's own report selection and the site's recording list are two
+// different decisions; only the second is site-wide.
+
+GC_Storage::update_settings(array(
+    'symbols' => array('price_dollar_rl', 'price_eur'),   // a viewer's picks
+    'sampler_symbols' => array('geram18', 'sekee'),        // the admin's picks
+), true);
+gc_check(
+    GC_Sampler::scheduled_symbols() === array('geram18', 'sekee'),
+    'the scheduler records the admin list, not the viewer symbol list'
+);
+
+// With no admin list, fall back to the site's watched symbols so simply
+// switching recording on still does something sensible.
+GC_Storage::update_settings(array('sampler_symbols' => array()), true);
+gc_check(
+    GC_Sampler::scheduled_symbols() === array('price_dollar_rl', 'price_eur'),
+    'an empty admin list falls back to the watched symbols'
+);
+
+// Blank entries must not become requests for a nameless symbol.
+GC_Storage::update_settings(array('sampler_symbols' => array('geram18', '', '  ')), true);
+gc_check(
+    GC_Sampler::scheduled_symbols() === array('geram18'),
+    'blank and whitespace-only entries are dropped from the admin list'
+);
+
+GC_Storage::update_settings(array('sampler_symbols' => array()), true);
+
 echo "checks: {$checks}, failures: {$failures}\n";
 exit($failures > 0 ? 1 : 0);

@@ -126,7 +126,7 @@ def run_sample(symbols: list[str] | None) -> int:
     return 1 if result["errors"] and not result["recorded"] else 0
 
 
-def run_probe_intraday(symbols: list[str] | None) -> int:
+def run_probe_intraday(symbols: list[str] | None, dump: str | None = None) -> int:
     """Report which TGJU chart endpoint answers from this machine.
 
     The chart service is undocumented, so rather than hard-coding one guess
@@ -134,7 +134,7 @@ def run_probe_intraday(symbols: list[str] | None) -> int:
     is saved to settings, so intraday reports then use it directly.
     """
     crawler = Crawler()
-    result = crawler.probe_intraday(symbols)
+    result = crawler.probe_intraday(symbols, dump_dir=dump)
     print(BANNER)
     print(f"  نماد آزمایشی: {result['symbol']}\n")
     for row in result["attempts"]:
@@ -153,6 +153,8 @@ def run_probe_intraday(symbols: list[str] | None) -> int:
                 detail += f"، آخرین قیمت {row['sample_close']}"
         print(f"  {mark} {row['endpoint']} / resolution={row['resolution']} — {detail}")
         print(f"      {row['url']}")
+        if row.get("dump"):
+            print(f"      پاسخ خام: {row['dump']}")
 
     working = result["working"]
     if working:
@@ -321,6 +323,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="بررسی اینکه سرویس نمودار درون‌روزی TGJU از این رایانه پاسخ می‌دهد یا نه",
     )
     probe.add_argument("--symbols", nargs="*", help="نمادی که برای آزمایش استفاده شود")
+    probe.add_argument(
+        "--dump", metavar="DIR",
+        help="ذخیره پاسخ خام هر آدرس در این پوشه (برای فرستادن و بررسی ساختار)",
+    )
 
     doctor = subparsers.add_parser("doctor", help="بررسی سلامت برنامه و اتصال به TGJU")
     doctor.add_argument("--offline", action="store_true", help="اتصال شبکه بررسی نشود")
@@ -337,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sample":
         return run_sample(args.symbols)
     if args.command == "probe-intraday":
-        return run_probe_intraday(args.symbols)
+        return run_probe_intraday(args.symbols, args.dump)
     if args.command == "doctor":
         return run_doctor(args.offline)
     return run_gui(args.host, args.port, not args.no_browser)

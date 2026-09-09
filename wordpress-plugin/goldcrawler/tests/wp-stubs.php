@@ -115,6 +115,12 @@ function get_users($args = array()) { return $GLOBALS['gc_test_users']; }
 function is_admin() { return $GLOBALS['gc_test_is_admin']; }
 
 function add_options_page(...$args) { $GLOBALS['gc_test_actions']['options_pages'][] = $args; }
+function checked($haystack, $current = true, $echo = true) {
+    $result = ((string) $haystack === (string) $current) ? " checked='checked'" : '';
+    if ($echo) { echo $result; }
+    return $result;
+}
+
 function selected($haystack, $current = true, $echo = true) {
     $result = ((string) $haystack === (string) $current) ? " selected='selected'" : '';
     if ($echo) { echo $result; }

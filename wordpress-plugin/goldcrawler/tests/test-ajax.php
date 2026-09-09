@@ -129,5 +129,66 @@ gc_stage_body(array('symbols' => array('geram18')));
 list($resp,) = gc_call(array('GC_Ajax', 'handle_crawl'));
 gc_check($resp['data']['success'] === true, 'crawl handler runs successfully');
 
+
+// -- site-wide settings are administrators-only -----------------------------
+// The front-end settings endpoint is reachable by every licensed user, so it
+// must not be a way to change what the site's scheduler does, where data
+// comes from, or how long it is kept.
+
+$GLOBALS['gc_test_user_role'] = 'administrator';
+GC_Storage::update_settings(array(
+    'intraday_recording' => true,
+    'retention_days' => 40,
+    'sampler_symbols' => array('geram18'),
+), true);
+
+gc_stage_body(array('retention_days' => 5, 'sampler_symbols' => array('sekee'),
+    'intraday_recording' => false, 'theme' => 'light'));
+list($resp,) = gc_call(array('GC_Ajax', 'handle_settings'));
+gc_check($resp['data']['data']['isAdmin'] === true, 'the settings response tells the UI the caller is an admin');
+gc_check($resp['data']['data']['settings']['retention_days'] === 5, 'an admin may change retention through the API');
+
+// Now the same call as a licensed non-admin.
+GC_Storage::update_settings(array(
+    'intraday_recording' => true,
+    'retention_days' => 40,
+    'sampler_symbols' => array('geram18'),
+), true);
+$GLOBALS['gc_test_user_role'] = 'subscriber';
+$GLOBALS['gc_test_current_user_id'] = 777;
+GC_License::grant(777);
+
+gc_stage_body(array('retention_days' => 5, 'sampler_symbols' => array('sekee'),
+    'intraday_recording' => false, 'intraday_endpoint' => 'https://evil.example/?symbol={symbol}',
+    'theme' => 'dark'));
+list($resp,) = gc_call(array('GC_Ajax', 'handle_settings'));
+$gc_saved = $resp['data']['data']['settings'];
+gc_check($resp['data']['data']['isAdmin'] === false, 'the response marks a non-admin caller');
+gc_check($gc_saved['retention_days'] === 40, 'a licensed non-admin cannot change retention');
+gc_check($gc_saved['intraday_recording'] === true, 'a licensed non-admin cannot switch recording off');
+gc_check($gc_saved['sampler_symbols'] === array('geram18'), 'a licensed non-admin cannot change what the scheduler records');
+gc_check($gc_saved['intraday_endpoint'] !== 'https://evil.example/?symbol={symbol}', 'a licensed non-admin cannot repoint the data source');
+gc_check($gc_saved['theme'] === 'dark', 'a licensed non-admin still saves their own theme');
+
+// Recording into the shared store and probing the endpoint are admin actions.
+gc_stage_body(array('symbols' => array('geram18')));
+list($resp,) = gc_call(array('GC_Ajax', 'handle_sample'));
+gc_check($resp['status'] === 403, 'a licensed non-admin cannot write into the shared sample store');
+gc_check(strpos($resp['data']['data']['message'], 'مدیران') !== false, 'the refusal says the section is for administrators');
+
+gc_stage_body(array('symbols' => array('geram18')));
+list($resp,) = gc_call(array('GC_Ajax', 'handle_probe'));
+gc_check($resp['status'] === 403, 'a licensed non-admin cannot run the endpoint probe');
+
+GC_License::revoke(777);
+$GLOBALS['gc_test_user_role'] = 'administrator';
+gc_stage_body(array('symbols' => array('geram18')));
+list($resp,) = gc_call(array('GC_Ajax', 'handle_sample'));
+gc_check($resp['status'] !== 403, 'an administrator may still record a sample');
+
+$GLOBALS['gc_test_user_role'] = null;
+GC_Storage::update_settings(array('retention_days' => 30, 'intraday_recording' => false,
+    'sampler_symbols' => array()), true);
+
 echo "checks: {$checks}, failures: {$failures}\n";
 exit($failures > 0 ? 1 : 0);

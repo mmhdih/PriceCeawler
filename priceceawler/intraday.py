@@ -204,10 +204,19 @@ def load_samples(symbol_key: str, from_ts: float, to_ts: float) -> dict[int, flo
     return dict(sorted(samples.items()))
 
 
-def prune(now: float | None = None) -> int:
-    """Deletes day files older than RETENTION_DAYS. Returns files removed."""
+def prune(now: float | None = None, days: int | None = None) -> int:
+    """Delete day files past the retention window. Returns files removed.
+
+    ``days`` defaults to the user's setting; RETENTION_DAYS is only the
+    fallback when no settings file has been written yet.
+    """
     now = time.time() if now is None else now
-    cutoff = local_iso_date(now - RETENTION_DAYS * 86400)
+    if days is None:
+        from .storage import Settings
+
+        days = Settings().retention_days()
+    days = max(1, int(days))
+    cutoff = local_iso_date(now - days * 86400)
     removed = 0
     for directory in base_dir().iterdir():
         if not directory.is_dir():

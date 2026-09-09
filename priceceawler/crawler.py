@@ -277,11 +277,12 @@ class Crawler:
         except OSError:  # pragma: no cover - a read-only data dir must not fail a report
             pass
 
-    def probe_intraday(self, keys: Sequence[str] | None = None) -> dict:
+    def probe_intraday(self, keys: Sequence[str] | None = None,
+                       dump_dir: str | None = None) -> dict:
         """Report which TGJU chart endpoint this machine can actually reach."""
         keys = list(keys or self.settings.get("symbols") or ["geram18"])
         symbol = self.resolve(keys[:1])[0]
-        report = tgju_intraday.probe(symbol)
+        report = tgju_intraday.probe(symbol, dump_dir=dump_dir)
         working = next((row for row in report if row.get("ok")), None)
         if working:
             self._pin_endpoint(working["endpoint"], working.get("resolution", ""))
@@ -296,7 +297,7 @@ class Crawler:
         under a fresh timestamp would invent an observation that never
         happened.
         """
-        keys = list(keys or self.settings.get("symbols") or [])
+        keys = list(keys or self.scheduled_symbols())
         recorded: list[str] = []
         errors: list[dict[str, str]] = []
 
@@ -326,6 +327,19 @@ class Crawler:
             "pruned": pruned,
             "intraday": intraday.summary(),
         }
+
+    def scheduled_symbols(self) -> list[str]:
+        """Symbols the background sampler records.
+
+        Falls back to the watched list when nothing specific was chosen, so
+        simply switching recording on still does something sensible.
+        """
+        chosen = [
+            str(key).strip()
+            for key in (self.settings.get("sampler_symbols") or [])
+            if str(key).strip()
+        ]
+        return chosen or list(self.settings.get("symbols") or [])
 
     def daily_crawl(self, keys: Sequence[str] | None = None) -> dict:
         """Refresh the archive for the watched symbols; used by ``--crawl``."""

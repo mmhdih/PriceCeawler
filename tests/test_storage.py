@@ -33,6 +33,34 @@ class TestSettings(unittest.TestCase):
         self.assertFalse(list(target.parent.glob("*.tmp")))
 
 
+class TestRetention(unittest.TestCase):
+    """Retention is configurable, and clamped so a bad value cannot hurt."""
+
+    def setUp(self):
+        self.settings = Settings(Path(tempfile.mkdtemp(prefix="pc-ret-")) / "s.json")
+
+    def test_the_default_is_thirty_days(self):
+        self.assertEqual(self.settings.retention_days(), 30)
+
+    def test_a_sane_value_passes_through(self):
+        self.settings.update({"retention_days": 90})
+        self.assertEqual(self.settings.retention_days(), 90)
+
+    def test_zero_and_negative_clamp_to_one_day(self):
+        # "Keep nothing" would delete today's own samples.
+        for value in (0, -1, -999):
+            self.settings.update({"retention_days": value})
+            self.assertEqual(self.settings.retention_days(), 1)
+
+    def test_an_absurd_value_clamps_to_ten_years(self):
+        self.settings.update({"retention_days": 10_000_000})
+        self.assertEqual(self.settings.retention_days(), 3650)
+
+    def test_a_non_numeric_value_falls_back_to_the_default(self):
+        self.settings.update({"retention_days": "لطفاً"})
+        self.assertEqual(self.settings.retention_days(), 30)
+
+
 class TestArchive(unittest.TestCase):
     def setUp(self):
         self.archive = Archive(Path(tempfile.mkdtemp(prefix="pc-archive-")))

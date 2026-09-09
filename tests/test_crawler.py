@@ -385,6 +385,42 @@ class TestSampleIntraday(unittest.TestCase):
         self.assertEqual(self.crawler.sample_intraday()["recorded"], [self.key])
 
 
+class TestScheduledSymbols(unittest.TestCase):
+    """What the background sampler records is its own setting."""
+
+    def setUp(self):
+        self.crawler = Crawler(Settings(tempfile.mktemp(suffix=".json")))
+
+    def test_an_empty_list_falls_back_to_the_watched_symbols(self):
+        self.crawler.settings.update({"symbols": ["geram18", "sekee"], "sampler_symbols": []})
+        self.assertEqual(self.crawler.scheduled_symbols(), ["geram18", "sekee"])
+
+    def test_a_chosen_list_wins_over_the_watched_symbols(self):
+        self.crawler.settings.update(
+            {"symbols": ["price_dollar_rl"], "sampler_symbols": ["geram18", "nim"]}
+        )
+        self.assertEqual(self.crawler.scheduled_symbols(), ["geram18", "nim"])
+
+    def test_blank_and_whitespace_entries_are_dropped(self):
+        # A whitespace-only key would make the sampler request a nameless URL.
+        self.crawler.settings.update({"sampler_symbols": ["geram18", "", "   ", " sekee "]})
+        self.assertEqual(self.crawler.scheduled_symbols(), ["geram18", "sekee"])
+
+    def test_sampling_uses_the_scheduled_list_when_no_keys_are_given(self):
+        self.crawler.settings.update(
+            {"symbols": ["price_dollar_rl"], "sampler_symbols": ["geram18"]}
+        )
+        asked = []
+
+        def points_for(symbol, force=False):
+            asked.append(symbol.key)
+            return [PricePoint(str(JalaliDate.today()), "", None, 1, 2, 7_000_000)], False
+        self.crawler.points_for = points_for
+
+        self.crawler.sample_intraday()
+        self.assertEqual(asked, ["geram18"])
+
+
 class TestCaching(unittest.TestCase):
     def setUp(self):
         self.crawler = Crawler(Settings(tempfile.mktemp(suffix=".json")))
