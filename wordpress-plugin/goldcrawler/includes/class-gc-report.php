@@ -119,14 +119,38 @@ final class GC_Report {
 
     const COLUMNS = array('تاریخ شمسی', 'روز هفته', 'کمترین', 'بیشترین', 'پایانی', 'میانگین معاملاتی', 'وضعیت');
 
+    /**
+     * Intraday rows carry a clock time (and an opening price per bucket), so
+     * they get two extra columns; a daily export keeps exactly the columns it
+     * always had.
+     */
+    const COLUMNS_INTRADAY = array('تاریخ شمسی', 'ساعت', 'روز هفته', 'باز', 'کمترین', 'بیشترین', 'پایانی', 'میانگین معاملاتی', 'تعداد نمونه');
+
+    /** True when the rows came from GC_Intraday (they always carry a time). */
+    public static function rows_are_intraday($rows) {
+        return !empty($rows) && isset($rows[0]['time']);
+    }
+
+    public static function columns_for($rows) {
+        return self::rows_are_intraday($rows) ? self::COLUMNS_INTRADAY : self::COLUMNS;
+    }
+
     private static function row_values($row) {
+        if (isset($row['time'])) {
+            return array(
+                $row['date'], $row['time'], $row['weekday'],
+                $row['open'], $row['low'], $row['high'], $row['close'], $row['average'],
+                $row['samples'],
+            );
+        }
         return array($row['date'], $row['weekday'], $row['low'], $row['high'], $row['close'], $row['average'], $row['status']);
     }
 
     /** @param array $series_list each: ['symbol' => ..., 'rows' => ..., 'stats' => ...] */
     public static function to_csv($series_list) {
+        $first_rows = isset($series_list[0]['rows']) ? $series_list[0]['rows'] : array();
         $handle = fopen('php://temp', 'r+');
-        fputcsv($handle, array_merge(array('نماد'), self::COLUMNS));
+        fputcsv($handle, array_merge(array('نماد'), self::columns_for($first_rows)));
         foreach ($series_list as $series) {
             foreach ($series['rows'] as $row) {
                 fputcsv($handle, array_merge(array($series['symbol']['name']), self::row_values($row)));

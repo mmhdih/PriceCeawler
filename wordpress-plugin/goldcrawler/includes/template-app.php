@@ -83,6 +83,22 @@ if (!defined('ABSPATH')) { exit; }
     </section>
 
     <section class="block">
+      <div class="block__head"><h2>دقت زمانی</h2></div>
+      <div class="chips" id="resolutionChips"></div>
+      <p class="hint" id="resolutionHint"></p>
+      <label class="switch" id="intradaySwitch">
+        <input type="checkbox" id="intradayRecording">
+        <span class="switch__track"><span class="switch__thumb"></span></span>
+        <span class="switch__label">
+          ثبت خودکار قیمت هر ۱۰ دقیقه
+          <small>لازمهٔ گزارش‌های درون‌روزی؛ داده‌های قدیمی‌تر از ۳۰ روز خودکار پاک می‌شوند.</small>
+        </span>
+      </label>
+      <button class="btn btn--soft" id="sampleBtn" type="button">ثبت نمونه همین حالا</button>
+      <div class="archive" id="intradayList"></div>
+    </section>
+
+    <section class="block">
       <div class="block__head"><h2>گزینه‌ها</h2></div>
       <label class="switch">
         <input type="checkbox" id="fillGaps" checked>

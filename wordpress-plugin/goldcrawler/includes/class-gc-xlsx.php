@@ -335,9 +335,27 @@ final class GC_Xlsx {
         foreach ($series_list as $series) {
             $symbol = $series['symbol'];
             $style_price = $symbol['decimals'] >= 4 ? 'body4' : ($symbol['decimals'] >= 2 ? 'body2' : 'body0');
+            $intraday = GC_Report::rows_are_intraday($series['rows']);
             $rows = array();
-            $rows[] = array_map(function ($h) { return array('v' => $h, 'style' => 'header'); }, GC_Report::COLUMNS);
+            $rows[] = array_map(
+                function ($h) { return array('v' => $h, 'style' => 'header'); },
+                GC_Report::columns_for($series['rows'])
+            );
             foreach ($series['rows'] as $row) {
+                if ($intraday) {
+                    $rows[] = array(
+                        array('v' => $row['date'], 'style' => 'text'),
+                        array('v' => $row['time'], 'style' => 'text'),
+                        array('v' => $row['weekday'], 'style' => 'text'),
+                        array('v' => $row['open'], 'style' => $style_price),
+                        array('v' => $row['low'], 'style' => $style_price),
+                        array('v' => $row['high'], 'style' => $style_price),
+                        array('v' => $row['close'], 'style' => $style_price),
+                        array('v' => $row['average'], 'style' => $style_price),
+                        array('v' => $row['samples'], 'style' => 'body0'),
+                    );
+                    continue;
+                }
                 $rows[] = array(
                     array('v' => $row['date'], 'style' => 'text'),
                     array('v' => $row['weekday'], 'style' => 'text'),
@@ -348,7 +366,10 @@ final class GC_Xlsx {
                     array('v' => $row['status'], 'style' => 'text'),
                 );
             }
-            $xlsx->add_sheet($symbol['name'], $rows, array(14, 12, 16, 16, 16, 20, 26));
+            $widths = $intraday
+                ? array(14, 10, 12, 16, 16, 16, 16, 20, 12)
+                : array(14, 12, 16, 16, 16, 20, 26);
+            $xlsx->add_sheet($symbol['name'], $rows, $widths);
             $xlsx->sheets[count($xlsx->sheets) - 1]['rtl'] = true;
         }
 

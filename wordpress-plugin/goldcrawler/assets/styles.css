@@ -241,6 +241,11 @@
 
 /* ── چیپ‌ها ─────────────────────────────────────────────── */
 .goldcrawler-app .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* intraday block: the resolution hint and the manual-sample button */
+.goldcrawler-app #resolutionHint { margin: 8px 0 4px; }
+.goldcrawler-app #sampleBtn { width: 100%; margin-top: 10px; }
+.goldcrawler-app #intradayList { margin-top: 10px; }
 .goldcrawler-app .chips--filters { margin-bottom: 10px; }
 .goldcrawler-app .chips--compact .chip { padding: 4px 11px; font-size: 12px; }
 

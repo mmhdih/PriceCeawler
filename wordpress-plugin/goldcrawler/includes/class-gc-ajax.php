@@ -36,7 +36,7 @@ final class GC_Ajax {
     public static $test_body_override = null;
 
     public static function register() {
-        foreach (array('meta', 'archive', 'series', 'export', 'settings', 'symbols', 'crawl') as $action) {
+        foreach (array('meta', 'archive', 'series', 'export', 'settings', 'symbols', 'crawl', 'sample') as $action) {
             add_action('wp_ajax_goldcrawler_' . $action, array(__CLASS__, 'handle_' . $action));
         }
     }
@@ -109,6 +109,9 @@ final class GC_Ajax {
             'settings' => GC_Storage::get_settings(),
             'archive' => GC_Storage::archive_summary(),
             'presets' => GC_Report::range_presets($today),
+            'resolutions' => GC_Intraday::resolutions(),
+            'intraday' => GC_Intraday::summary(),
+            'intradayRetentionDays' => GC_Intraday::RETENTION_DAYS,
         ));
     }
 
@@ -127,7 +130,12 @@ final class GC_Ajax {
             wp_send_json_error(array('message' => $e->getMessage()), $e->status);
         }
 
-        $result = GC_Crawler::build($keys, $start, $end, ($payload['fillGaps'] ?? true) !== false, !empty($payload['force']));
+        $result = GC_Crawler::build_at(
+            $keys, $start, $end,
+            ($payload['fillGaps'] ?? true) !== false,
+            !empty($payload['force']),
+            $payload['resolution'] ?? 'daily'
+        );
         if (!$result['series'] && $result['errors']) {
             wp_send_json_success(array_merge(array('error' => $result['errors'][0]['message']), $result), 200);
             return;
@@ -154,7 +162,12 @@ final class GC_Ajax {
             wp_send_json_error(array('message' => $e->getMessage()), $e->status);
         }
 
-        $result = GC_Crawler::build($keys, $start, $end, ($payload['fillGaps'] ?? true) !== false);
+        $result = GC_Crawler::build_at(
+            $keys, $start, $end,
+            ($payload['fillGaps'] ?? true) !== false,
+            false,
+            $payload['resolution'] ?? 'daily'
+        );
         if (!$result['series']) {
             $message = $result['errors'] ? $result['errors'][0]['message'] : 'داده‌ای برای خروجی وجود ندارد.';
             wp_send_json_error(array('message' => $message), 400);
@@ -162,7 +175,8 @@ final class GC_Ajax {
 
         $s = GC_Jalali::format($start[0], $start[1], $start[2]);
         $e = GC_Jalali::format($end[0], $end[1], $end[2]);
-        $name = 'TGJU-' . str_replace('/', '-', $s) . '_' . str_replace('/', '-', $e) . '.' . $format;
+        $suffix = GC_Intraday::is_intraday($result['resolution']) ? '-' . $result['resolution'] : '';
+        $name = 'TGJU-' . str_replace('/', '-', $s) . '_' . str_replace('/', '-', $e) . $suffix . '.' . $format;
 
         if ($format === 'xlsx') {
             $bytes = GC_Xlsx::build_report($result['series'], $start, $end, 'GoldCrawler', GOLDCRAWLER_VERSION);
@@ -199,7 +213,21 @@ final class GC_Ajax {
 
     public static function handle_settings() {
         self::guard();
-        wp_send_json_success(array('settings' => GC_Storage::update_settings(self::body())));
+        $settings = GC_Storage::update_settings(self::body());
+        // Recording is what creates the 10-minute background job, so the
+        // schedule has to follow the setting immediately - otherwise turning
+        // it off would leave the cron sampling forever.
+        GC_Sampler::sync_schedule(!empty($settings['intraday_recording']));
+        wp_send_json_success(array('settings' => $settings));
+    }
+
+    /** Records one intraday sample right now ("ثبت نمونه همین حالا"). */
+    public static function handle_sample() {
+        self::guard();
+        $payload = self::body();
+        $keys = !empty($payload['symbols']) ? $payload['symbols'] : null;
+        $result = GC_Sampler::sample_now($keys);
+        wp_send_json_success(array_merge($result, array('intraday' => GC_Intraday::summary())));
     }
 
     public static function handle_symbols() {

@@ -18,6 +18,7 @@ require __DIR__ . '/../includes/class-gc-tgju.php';
 require __DIR__ . '/../includes/class-gc-report.php';
 require __DIR__ . '/../includes/class-gc-storage.php';
 require __DIR__ . '/../includes/class-gc-crawler.php';
+require __DIR__ . '/../includes/class-gc-intraday.php';
 require __DIR__ . '/../includes/class-gc-xlsx.php';
 require __DIR__ . '/../includes/class-gc-license.php';
 require __DIR__ . '/../includes/class-gc-ajax.php';

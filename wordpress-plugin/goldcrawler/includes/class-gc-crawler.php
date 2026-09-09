@@ -120,6 +120,37 @@ final class GC_Crawler {
         return array('series' => $series, 'errors' => $errors, 'fromCache' => $from_cache);
     }
 
+    /**
+     * Build series at whatever resolution the request asked for.
+     *
+     * Daily goes to TGJU (which only serves daily rows); the intraday
+     * resolutions are served from our own recorded samples, since no amount
+     * of asking the daily endpoint can recover the last ten minutes.
+     *
+     * @return array{series: array[], errors: array[], fromCache: string[], resolution: string}
+     */
+    public static function build_at($keys, $start, $end, $fill_gaps = true, $force = false, $resolution = 'daily') {
+        $resolution = GC_Intraday::normalise_resolution($resolution);
+        if (!GC_Intraday::is_intraday($resolution)) {
+            return array_merge(self::build($keys, $start, $end, $fill_gaps, $force), array('resolution' => $resolution));
+        }
+
+        $series = array();
+        $errors = array();
+        foreach (self::resolve($keys) as $symbol) {
+            $built = GC_Intraday::build_series($symbol, $start, $end, $resolution);
+            if (!$built['rows']) {
+                $errors[] = array(
+                    'symbol' => $symbol['key'], 'name' => $symbol['name'],
+                    'message' => 'برای «' . $symbol['name'] . '» در این بازه هیچ نمونه درون‌روزی ثبت نشده است.',
+                );
+                continue;
+            }
+            $series[] = array('symbol' => $symbol, 'rows' => $built['rows'], 'stats' => $built['stats']);
+        }
+        return array('series' => $series, 'errors' => $errors, 'fromCache' => array(), 'resolution' => $resolution);
+    }
+
     public static function daily_crawl($keys = null) {
         $settings = GC_Storage::get_settings();
         $keys = $keys ?: $settings['symbols'];

@@ -30,6 +30,13 @@ final class GC_Storage {
         'auto_crawl' => false,
         'theme' => 'light',
         'last_crawl' => '',
+        // Intraday (10-minute / hourly / per-change) prices have to be
+        // sampled as time passes - the TGJU history endpoint only ever
+        // returns one row per day. Off by default for the same reason
+        // auto_crawl is: no unattended writing to uploads/ unless asked.
+        'intraday_recording' => false,
+        'resolution' => 'daily',
+        'last_sample' => 0,
     );
 
     public static function base_dir() {
@@ -91,7 +98,8 @@ final class GC_Storage {
 
     // -- cache --------------------------------------------------------------
 
-    private static function safe_filename($key) {
+    /** Public because GC_Intraday stores its own files keyed by the same symbol keys. */
+    public static function safe_filename($key) {
         // Same character class GC_Symbols::is_valid_custom_key() enforces
         // upstream (letters/digits/._-), so a legitimate key round-trips
         // exactly back to the same filename. ".." is still neutralised here
