@@ -10,6 +10,7 @@ _TMP = tempfile.mkdtemp(prefix="priceceawler-test-")
 os.environ["PRICECEAWLER_DATA_DIR"] = _TMP
 
 from priceceawler import server as server_module  # noqa: E402
+from priceceawler import crawler as crawler_module  # noqa: E402
 from priceceawler.crawler import Crawler  # noqa: E402
 from priceceawler.jalali import JalaliDate  # noqa: E402
 from priceceawler.tgju import PricePoint, TgjuError  # noqa: E402
@@ -31,6 +32,17 @@ class ServerTestCase(unittest.TestCase):
         cls._original = Crawler.points_for
         Crawler.points_for = lambda self, symbol, force=False: (fake_points(symbol), False)
 
+        # Intraday reports now extract from TGJU's chart service first. These
+        # tests cover the API surface, not that service, and must never touch
+        # the network - so extraction reports "nothing here" and the recorded
+        # samples the tests create are what gets served.
+        cls._original_candles = crawler_module.tgju_intraday.fetch_candles
+
+        def no_candles(symbol, from_ts, to_ts, *, endpoints=None, **kwargs):
+            raise TgjuError("سرویس نمودار در آزمون غیرفعال است.")
+
+        crawler_module.tgju_intraday.fetch_candles = no_candles
+
         cls.server = server_module.create_server("127.0.0.1", 0)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -42,6 +54,7 @@ class ServerTestCase(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
         Crawler.points_for = cls._original
+        crawler_module.tgju_intraday.fetch_candles = cls._original_candles
 
     # -- helpers ---------------------------------------------------------
     def call(self, path, payload=None, token=None, raw=False, headers=None):

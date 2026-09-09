@@ -16,6 +16,7 @@ require __DIR__ . '/../includes/class-gc-report.php';
 require __DIR__ . '/../includes/class-gc-storage.php';
 require __DIR__ . '/../includes/class-gc-crawler.php';
 require __DIR__ . '/../includes/class-gc-intraday.php';
+require __DIR__ . '/../includes/class-gc-tgju-intraday.php';
 require __DIR__ . '/../includes/class-gc-xlsx.php';
 
 $failures = 0; $checks = 0;
@@ -61,12 +62,22 @@ foreach (array('10m' => 2, '1h' => 1, 'tick' => 3) as $resolution => $expected) 
 $fallback = GC_Crawler::build_at(array('geram18'), $start, $end, true, true, 'every-nanosecond');
 gc_check($fallback['resolution'] === 'daily', 'an unknown resolution falls back to daily rather than erroring');
 
-// A symbol with no recorded samples is reported as an error, not silently empty.
+// With no chart endpoint stubbed, extraction fails and (in "auto") the
+// recorded samples answer instead - the whole point of the fallback.
 $missing = GC_Crawler::build_at(array('sekee'), $start, $end, true, false, '10m');
-gc_check($missing['series'] === array(), 'a symbol with no intraday samples yields no series');
-// "No samples" alone is a dead end: the message must carry the next step,
-// since intraday data only exists from the moment recording is turned on.
-gc_check(count($missing['errors']) === 1, 'the symbol with no samples produces exactly one error');
+gc_check($missing['series'] === array(), 'a symbol with neither extraction nor samples yields no series');
+gc_check(count($missing['errors']) === 1, 'the symbol with no data produces exactly one error');
+gc_check(
+    strpos($missing['errors'][0]['message'], 'سرویس نمودار') !== false,
+    'in auto mode the reported failure is the extraction failure'
+);
+
+// Forcing the recorded source produces the recording-specific guidance:
+// "no samples" alone would be a dead end, so the message must carry a next
+// step and admit that past intraday data cannot be recovered.
+GC_Storage::update_settings(array('intraday_source' => 'recorded'));
+
+$missing = GC_Crawler::build_at(array('sekee'), $start, $end, true, false, '10m');
 $gc_msg = $missing['errors'][0]['message'];
 gc_check(strpos($gc_msg, 'ثبت خودکار') !== false, 'the message names the recording switch the user has to turn on');
 gc_check(strpos($gc_msg, 'قابل بازیابی نیست') !== false, 'the message admits past intraday data cannot be recovered');
@@ -78,6 +89,48 @@ $gc_outside = GC_Crawler::build_at(array('geram18'), $gc_far, $gc_far, true, fal
 $gc_outside_msg = $gc_outside['errors'][0]['message'];
 gc_check(strpos($gc_outside_msg, 'بیرون از این محدوده') !== false, 'a range outside the recorded days says so');
 gc_check(strpos($gc_outside_msg, '۱۴۰۴/۰۵/۲۸') !== false, 'that message names the first recorded Jalali day in Persian digits');
+
+// -- extraction is preferred over recorded samples in "auto" ----------------
+GC_Storage::update_settings(array('intraday_source' => 'auto', 'intraday_endpoint' => ''));
+
+// The daily stub above is keyed on 'geram18', which also appears inside the
+// chart URLs - clear the registry so it cannot answer for the chart service.
+$GLOBALS['gc_test_remote_get_responses'] = array();
+
+// Bars whose prices differ from the recorded samples, so we can tell which
+// source actually answered.
+gc_test_stub_remote_get('platform.tgju.org', array('code' => 200, 'body' => json_encode(array(
+    's' => 'ok',
+    't' => array($base, $base + 60),
+    'o' => array(80000000, 80100000),
+    'h' => array(80500000, 80600000),
+    'l' => array(79900000, 80000000),
+    'c' => array(80100000, 80400000),
+))));
+
+$extracted = GC_Crawler::build_at(array('geram18'), $start, $end, true, false, '10m');
+gc_check(count($extracted['series']) === 1, 'extraction produces a series');
+$xrow = $extracted['series'][0]['rows'][0];
+gc_check($xrow['close'] === 8040000, 'the rows came from extraction, not the recorded samples');
+gc_check($xrow['high'] === 8060000, 'the bucket high is the max of the extracted bar highs');
+gc_check($xrow['low'] === 7990000, 'the bucket low is the min of the extracted bar lows');
+gc_check($xrow['samples'] === 2, 'the sample count is the number of extracted bars');
+gc_check(
+    GC_Storage::get_settings()['intraday_endpoint'] === 'platform-tvdata',
+    'the endpoint that answered is pinned so later requests skip probing'
+);
+
+// "recorded" must ignore the (now working) chart service entirely.
+GC_Storage::update_settings(array('intraday_source' => 'recorded'));
+$forced = GC_Crawler::build_at(array('geram18'), $start, $end, true, false, '10m');
+gc_check($forced['series'][0]['rows'][0]['close'] === 7020000,
+    'forcing the recorded source ignores the chart service');
+
+GC_Storage::update_settings(array('intraday_source' => 'auto', 'intraday_endpoint' => ''));
+$GLOBALS['gc_test_remote_get_responses'] = array();
+gc_test_stub_remote_get('geram18', array('code' => 200, 'body' => json_encode(array('data' => array(
+    array('70000000', '69900000', '70100000', '70000000', '', '', '2025-08-19', '1404/05/28'),
+)))));
 
 // -- CSV: daily output unchanged, intraday grows a time column --------------
 $daily_csv = GC_Report::to_csv($daily['series']);

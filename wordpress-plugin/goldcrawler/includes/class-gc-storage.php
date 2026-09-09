@@ -35,6 +35,14 @@ final class GC_Storage {
         // returns one row per day. Off by default for the same reason
         // auto_crawl is: no unattended writing to uploads/ unless asked.
         'intraday_recording' => false,
+        // Where intraday rows come from. "auto" asks TGJU's chart service
+        // first and only falls back to locally recorded samples; "tgju" and
+        // "recorded" force one source so a failure stays visible instead of
+        // being silently papered over by the other.
+        'intraday_source' => 'auto',
+        // Pinned chart endpoint: a candidate name, or a full URL template
+        // with {symbol}/{resolution}/{from}/{to}. Empty = probe candidates.
+        'intraday_endpoint' => '',
         'resolution' => 'daily',
         'last_sample' => 0,
     );

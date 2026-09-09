@@ -90,7 +90,7 @@ function busy(on, text = 'در حال دریافت داده‌ها…') {
   state.busy = on;
   $('overlayText').textContent = text;
   $('overlay').hidden = !on;
-  ['fetchBtn', 'refreshBtn', 'crawlBtn', 'sampleBtn'].forEach((id) => {
+  ['fetchBtn', 'refreshBtn', 'crawlBtn', 'sampleBtn', 'probeBtn'].forEach((id) => {
     const button = $(id);
     if (button) button.disabled = on;
   });
@@ -585,32 +585,6 @@ function renderTable() {
 const isIntradayResolution = (id) =>
   (state.resolutions || []).some((r) => r.id === id && r.intraday);
 
-/**
- * Picking an intraday resolution is the user asking for intraday data, but
- * that data only exists from the moment recording starts - so start it here
- * instead of leaving them on an empty report with one error per symbol.
- * Also snaps the range to today, since older days cannot have samples yet.
- */
-async function startRecordingForIntraday() {
-  const today = (state.presets || []).find((p) => p.id === '1');
-  if (today) {
-    state.preset = today.id;
-    $('startDate').value = faDigits(today.start);
-    $('endDate').value = faDigits(today.end);
-    renderPresets();
-  }
-
-  const toggle = $('intradayRecording');
-  const justEnabled = toggle && !toggle.checked;
-  if (justEnabled) toggle.checked = true;
-  await persistSettings();
-  if (justEnabled) {
-    toast('ثبت خودکار قیمت هر ۱۰ دقیقه روشن شد؛ داده از همین حالا جمع می‌شود.', 'info', 7000);
-  }
-  // One sample right now, so the very first intraday report is not empty.
-  await sampleNow({ quiet: true });
-}
-
 function renderResolutions() {
   const box = $('resolutionChips');
   if (!box) return;
@@ -621,11 +595,9 @@ function renderResolutions() {
     chip.type = 'button';
     chip.classList.toggle('is-active', state.resolution === res.id);
     chip.onclick = () => {
-      const wasIntraday = isIntradayResolution(state.resolution);
       state.resolution = res.id;
       renderResolutions();
       persistSettings();
-      if (!wasIntraday && isIntradayResolution(res.id)) startRecordingForIntraday();
     };
     box.appendChild(chip);
   });
@@ -634,7 +606,7 @@ function renderResolutions() {
   const hint = $('resolutionHint');
   if (hint) {
     hint.textContent = intraday
-      ? 'گزارش از نمونه‌های ثبت‌شده روی همین رایانه ساخته می‌شود — فقط برای بازه‌هایی که ثبت خودکار روشن بوده.'
+      ? 'قیمت‌های این بازه با همین دقت از سرویس نمودار TGJU استخراج می‌شود.'
       : 'گزارش روزانه مستقیماً از تاریخچه TGJU خوانده می‌شود.';
   }
   const sw = $('intradaySwitch');
@@ -660,6 +632,40 @@ function renderIntraday(rows) {
     );
     box.appendChild(item);
   });
+}
+
+/**
+ * Reports whether TGJU's chart service answers from this host.
+ *
+ * The endpoint is undocumented, so instead of failing mysteriously the user
+ * gets a direct answer, and whatever worked is pinned server-side.
+ */
+async function probeIntraday() {
+  const box = $('probeResult');
+  if (state.busy) return;
+  busy(true, 'در حال بررسی سرویس درون‌روزی…');
+  try {
+    const payload = await api('api/probe', {
+      method: 'POST',
+      body: { symbols: [...state.selected] },
+    });
+    const working = payload.working;
+    if (box) {
+      box.hidden = false;
+      box.textContent = working
+        ? `سرویس درون‌روزی کار می‌کند (${working.endpoint} / ${working.resolution}).`
+        : 'هیچ‌کدام از آدرس‌های شناخته‌شده پاسخ نداد. از تنظیمات، آدرس سرویس نمودار را دستی وارد کنید.';
+    }
+    toast(
+      working ? 'سرویس درون‌روزی TGJU در دسترس است.' : 'سرویس درون‌روزی TGJU پاسخ نداد.',
+      working ? 'ok' : 'warn',
+      working ? 4000 : 9000,
+    );
+  } catch (error) {
+    toast(error.message, 'error', 9000);
+  } finally {
+    busy(false);
+  }
 }
 
 async function sampleNow({ quiet = false } = {}) {
@@ -1080,6 +1086,7 @@ async function init() {
   $('refreshBtn').onclick = () => fetchSeries(true);
   $('crawlBtn').onclick = crawlNow;
   $('sampleBtn').onclick = () => sampleNow();
+  $('probeBtn').onclick = probeIntraday;
   $('addSymbolBtn').onclick = addCustomSymbol;
   $('selectVisibleBtn').onclick = selectVisibleSymbols;
   $('clearSymbolsBtn').onclick = clearSelectedSymbols;

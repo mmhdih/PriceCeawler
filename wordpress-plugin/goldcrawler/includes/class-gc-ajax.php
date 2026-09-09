@@ -36,7 +36,7 @@ final class GC_Ajax {
     public static $test_body_override = null;
 
     public static function register() {
-        foreach (array('meta', 'archive', 'series', 'export', 'settings', 'symbols', 'crawl', 'sample') as $action) {
+        foreach (array('meta', 'archive', 'series', 'export', 'settings', 'symbols', 'crawl', 'sample', 'probe') as $action) {
             add_action('wp_ajax_goldcrawler_' . $action, array(__CLASS__, 'handle_' . $action));
         }
     }
@@ -222,6 +222,19 @@ final class GC_Ajax {
     }
 
     /** Records one intraday sample right now ("ثبت نمونه همین حالا"). */
+    /**
+     * Reports which TGJU chart endpoint this host can reach.
+     *
+     * The chart service is undocumented, so instead of hard-coding one guess
+     * the plugin tries the known shapes and remembers what answered.
+     */
+    public static function handle_probe() {
+        self::guard();
+        $payload = self::body();
+        $keys = !empty($payload['symbols']) ? $payload['symbols'] : null;
+        wp_send_json_success(GC_Crawler::probe_intraday($keys));
+    }
+
     public static function handle_sample() {
         self::guard();
         $payload = self::body();

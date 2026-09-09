@@ -139,20 +139,96 @@ final class GC_Crawler {
         $errors = array();
         $settings = GC_Storage::get_settings();
         $recording = !empty($settings['intraday_recording']);
+        $source = isset($settings['intraday_source']) ? $settings['intraday_source'] : 'auto';
+        $endpoints = GC_TGJU_Intraday::endpoints_from_setting(
+            isset($settings['intraday_endpoint']) ? $settings['intraday_endpoint'] : ''
+        );
+        list($from_ts, $to_ts) = GC_Intraday::range_bounds($start, $end);
+
         foreach (self::resolve($keys) as $symbol) {
-            $built = GC_Intraday::build_series($symbol, $start, $end, $resolution);
-            if (!$built['rows']) {
-                // Say why there is nothing and what to do about it - "no
-                // samples recorded" alone leaves the user with no next step.
+            $rows = array();
+            $fetch_error = '';
+
+            // Extraction first: it can answer for any past range, whereas
+            // recorded samples only cover time the sampler was running for.
+            if ($source === 'auto' || $source === 'tgju') {
+                try {
+                    $fetched = GC_TGJU_Intraday::fetch_candles($symbol, $from_ts, $to_ts, $endpoints);
+                    $rows = GC_Intraday::aggregate_candles(
+                        $fetched['candles'], $resolution, $symbol['decimals']
+                    );
+                    if ($rows) {
+                        // Remember what worked so later requests skip probing.
+                        self::pin_intraday_endpoint($fetched['endpoint'], $settings);
+                    }
+                } catch (GC_TGJU_Intraday_Error $exc) {
+                    $fetch_error = $exc->getMessage();
+                }
+            }
+
+            if (!$rows && ($source === 'auto' || $source === 'recorded')) {
+                $built = GC_Intraday::build_series($symbol, $start, $end, $resolution);
+                $rows = $built['rows'];
+            }
+
+            if (!$rows) {
+                // Say why there is nothing and what to do about it - "no data"
+                // alone leaves the user with no next step.
+                if ($source === 'recorded') {
+                    $message = GC_Intraday::explain_empty($symbol, $start, $end, $recording);
+                } elseif ($fetch_error !== '') {
+                    $message = '«' . $symbol['name'] . '»: ' . $fetch_error;
+                } else {
+                    $message = 'برای «' . $symbol['name']
+                        . '» در این بازه داده درون‌روزی از TGJU دریافت نشد.';
+                }
                 $errors[] = array(
-                    'symbol' => $symbol['key'], 'name' => $symbol['name'],
-                    'message' => GC_Intraday::explain_empty($symbol, $start, $end, $recording),
+                    'symbol' => $symbol['key'], 'name' => $symbol['name'], 'message' => $message,
                 );
                 continue;
             }
-            $series[] = array('symbol' => $symbol, 'rows' => $built['rows'], 'stats' => $built['stats']);
+
+            $series[] = array(
+                'symbol' => $symbol,
+                'rows' => $rows,
+                'stats' => GC_Intraday::stats($rows, $symbol),
+            );
         }
         return array('series' => $series, 'errors' => $errors, 'fromCache' => array(), 'resolution' => $resolution);
+    }
+
+    /** Persist the chart endpoint that answered, so we stop probing. */
+    private static function pin_intraday_endpoint($name, $settings) {
+        $current = isset($settings['intraday_endpoint']) ? $settings['intraday_endpoint'] : '';
+        // A user-supplied URL template is theirs to keep; never churn it.
+        if ($name === 'custom' || $current === $name || strpos($current, '{symbol}') !== false) {
+            return;
+        }
+        GC_Storage::update_settings(array('intraday_endpoint' => $name));
+    }
+
+    /** Report which TGJU chart endpoint this host can actually reach. */
+    public static function probe_intraday($keys = null) {
+        $settings = GC_Storage::get_settings();
+        $keys = $keys ? $keys : (isset($settings['symbols']) ? $settings['symbols'] : array('geram18'));
+        $resolved = self::resolve(array_slice((array) $keys, 0, 1));
+        if (!$resolved) {
+            $resolved = self::resolve(array('geram18'));
+        }
+        $symbol = $resolved[0];
+        $report = GC_TGJU_Intraday::probe($symbol);
+
+        $working = null;
+        foreach ($report as $row) {
+            if (!empty($row['ok'])) {
+                $working = $row;
+                break;
+            }
+        }
+        if ($working) {
+            self::pin_intraday_endpoint($working['endpoint'], $settings);
+        }
+        return array('symbol' => $symbol['key'], 'working' => $working, 'attempts' => $report);
     }
 
     public static function daily_crawl($keys = null) {

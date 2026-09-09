@@ -1,13 +1,18 @@
-"""Intraday price samples: storage, retention and resampling.
+"""Intraday resampling, plus optional local sampling of live prices.
 
-The TGJU history endpoint returns ONE row per calendar day, so 10-minute /
-hourly / per-change prices cannot be derived from it - they have to be
-sampled as time passes and kept. This module owns that: ``record()`` appends
-a (timestamp, price) sample per symbol and ``aggregate()`` turns whatever
-samples exist in a range into the resolution the user asked for.
+Two things live here. The important one is *resampling*: ``aggregate()`` and
+``aggregate_candles()`` turn observations into the resolution the user asked
+for - 10-minute and hourly OHLC buckets, or one row per price change. Both
+the candles extracted from TGJU (see :mod:`tgju_intraday`) and any locally
+recorded samples go through this same bucketing, so the two sources can never
+disagree about where a bucket starts.
 
-Files live one-per-symbol-per-day so a day is a small read and retention
-pruning is just "delete files whose name is older than N days".
+The secondary one is a local sample store: ``record()`` appends a
+(timestamp, price) observation per symbol, kept one file per symbol per day
+so a day is a small read and retention pruning is just "delete files whose
+name is older than N days". That store is a *fallback* for when the chart
+service cannot be reached - it only ever covers time that already passed
+while sampling was switched on, which is why extraction is preferred.
 
 All calendar/clock rendering uses Tehran time, not the machine's, so the
 timestamps on a report are the trading clock regardless of where it runs.
@@ -36,6 +41,7 @@ __all__ = [
     "prune",
     "summary",
     "aggregate",
+    "aggregate_candles",
     "build_rows",
     "explain_empty",
     "symbol_summary",
@@ -374,6 +380,71 @@ def explain_empty(symbol: Symbol, recording: bool) -> str:
         f"ثبت درون‌روزی «{symbol.name}» از {first} شروع شده و تا {last} داده دارد؛"
         " بازه‌ای که انتخاب کرده‌اید بیرون از این محدوده است. بازه را به «امروز» تغییر دهید."
     )
+
+
+def aggregate_candles(
+    candles: Sequence[Any], resolution: str, decimals: int = 0
+) -> list[dict[str, Any]]:
+    """Resample OHLC bars (from TGJU) into the requested resolution.
+
+    Distinct from :func:`aggregate`, which takes single observed prices: when
+    the source already gives bars, a bucket's high is the max of the bars'
+    highs and its low the min of their lows. Collapsing them to closes first
+    would quietly discard the extremes inside each bucket.
+    """
+    if not candles:
+        return []
+    ordered = sorted(candles, key=lambda c: int(c.ts))
+
+    if resolution == RES_TICK:
+        # "Every change" over historical bars means: one row per bar whose
+        # close differs from the previous kept one.
+        rows: list[dict[str, Any]] = []
+        previous: float | None = None
+        for candle in ordered:
+            price = candle.close if candle.close is not None else candle.open
+            if price is None:
+                continue
+            price = float(price)
+            if previous is not None and _round(price, decimals) == _round(previous, decimals):
+                continue
+            row = _make_row(int(candle.ts), price, price, price, price, price, 1, decimals)
+            row["change"] = None if previous is None else _round(price - previous, decimals)
+            rows.append(row)
+            previous = price
+        return rows
+
+    if resolution not in _BUCKET_SECONDS:
+        return []
+
+    buckets: dict[int, list[Any]] = {}
+    for candle in ordered:
+        buckets.setdefault(bucket_start(int(candle.ts), resolution), []).append(candle)
+
+    rows = []
+    for start, bars in sorted(buckets.items()):
+        closes = [float(b.close) for b in bars if b.close is not None]
+        opens = [float(b.open) for b in bars if b.open is not None]
+        highs = [float(b.high) for b in bars if b.high is not None] or closes
+        lows = [float(b.low) for b in bars if b.low is not None] or closes
+        if not closes and not opens:
+            continue
+        open_ = opens[0] if opens else closes[0]
+        close = closes[-1] if closes else opens[-1]
+        prices = closes or opens
+        rows.append(
+            _make_row(
+                start,
+                open_,
+                min(lows) if lows else close,
+                max(highs) if highs else close,
+                close,
+                sum(prices) / len(prices),
+                len(bars),
+                decimals,
+            )
+        )
+    return rows
 
 
 def build_rows(

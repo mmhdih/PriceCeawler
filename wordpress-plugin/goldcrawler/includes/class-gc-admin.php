@@ -14,6 +14,7 @@ final class GC_Admin {
     const PAGE_SLUG = 'goldcrawler-access';
     const NONCE_ACTION = 'goldcrawler_save_access';
     const NONCE_ACTION_SYMBOLS = 'goldcrawler_save_symbols';
+    const NONCE_ACTION_INTRADAY = 'goldcrawler_save_intraday';
 
     public static function register() {
         add_action('admin_menu', array(__CLASS__, 'add_menu'));
@@ -141,11 +142,16 @@ final class GC_Admin {
 
         $notice = null;
         $symbols_notice = null;
+        $intraday_notice = null;
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (isset($_POST['goldcrawler_save'])) {
                 $notice = self::handle_save();
             } elseif (isset($_POST['goldcrawler_save_symbols'])) {
                 $symbols_notice = self::handle_save_symbols();
+            } elseif (isset($_POST['goldcrawler_save_intraday'])) {
+                $intraday_notice = self::handle_save_intraday();
+            } elseif (isset($_POST['goldcrawler_probe_intraday'])) {
+                $intraday_notice = self::handle_probe_intraday();
             }
         }
 
@@ -209,8 +215,139 @@ final class GC_Admin {
             . '</script>';
 
         self::render_symbols_section($symbols_notice);
+        self::render_intraday_section($intraday_notice);
 
         echo '</div>';
+    }
+
+    /** Saves the intraday data source and (optional) chart endpoint. */
+    private static function handle_save_intraday() {
+        if (!isset($_POST['goldcrawler_intraday_nonce'])
+            || !wp_verify_nonce($_POST['goldcrawler_intraday_nonce'], self::NONCE_ACTION_INTRADAY)) {
+            return array('type' => 'error', 'text' => 'نشست فرم منقضی شده؛ دوباره تلاش کنید.');
+        }
+        if (!current_user_can(GC_License::MANAGE_CAPABILITY)) {
+            return array('type' => 'error', 'text' => 'شما اجازه تغییر این تنظیمات را ندارید.');
+        }
+
+        $source = isset($_POST['goldcrawler_intraday_source'])
+            ? sanitize_text_field(wp_unslash($_POST['goldcrawler_intraday_source'])) : 'auto';
+        if (!in_array($source, array('auto', 'tgju', 'recorded'), true)) {
+            $source = 'auto';
+        }
+
+        // A URL template, not a plain URL: esc_url_raw would strip the braces
+        // our four placeholders need, so validate the shape by hand instead.
+        $endpoint = isset($_POST['goldcrawler_intraday_endpoint'])
+            ? trim(wp_unslash($_POST['goldcrawler_intraday_endpoint'])) : '';
+        if ($endpoint !== '' && strpos($endpoint, '{symbol}') !== false) {
+            if (!preg_match('#^https://[^\s<>"\']+$#', $endpoint)) {
+                return array(
+                    'type' => 'error',
+                    'text' => 'آدرس سرویس باید با https:// شروع شود و شامل {symbol} باشد.',
+                );
+            }
+        } elseif ($endpoint !== '') {
+            // Otherwise it must name one of the known candidates.
+            $names = array_column(GC_TGJU_Intraday::candidates(), 'name');
+            if (!in_array($endpoint, $names, true)) {
+                return array(
+                    'type' => 'error',
+                    'text' => 'آدرس نامعتبر است: یا خالی بگذارید، یا یک آدرس کامل https با {symbol} بنویسید.',
+                );
+            }
+        }
+
+        GC_Storage::update_settings(array(
+            'intraday_source' => $source,
+            'intraday_endpoint' => $endpoint,
+        ));
+        return array('type' => 'success', 'text' => 'تنظیمات سرویس درون‌روزی ذخیره شد.');
+    }
+
+    /** Runs the endpoint probe and reports the result inline. */
+    private static function handle_probe_intraday() {
+        if (!isset($_POST['goldcrawler_intraday_nonce'])
+            || !wp_verify_nonce($_POST['goldcrawler_intraday_nonce'], self::NONCE_ACTION_INTRADAY)) {
+            return array('type' => 'error', 'text' => 'نشست فرم منقضی شده؛ دوباره تلاش کنید.');
+        }
+        if (!current_user_can(GC_License::MANAGE_CAPABILITY)) {
+            return array('type' => 'error', 'text' => 'شما اجازه اجرای این بررسی را ندارید.');
+        }
+
+        $result = GC_Crawler::probe_intraday(null);
+        if (!empty($result['working'])) {
+            return array(
+                'type' => 'success',
+                'text' => 'سرویس درون‌روزی کار می‌کند: ' . $result['working']['endpoint']
+                    . ' (resolution=' . $result['working']['resolution'] . ') — ذخیره شد.',
+            );
+        }
+        $first = !empty($result['attempts']) ? $result['attempts'][0] : array();
+        $why = isset($first['error']) ? $first['error'] : 'بدون داده';
+        return array(
+            'type' => 'error',
+            'text' => 'هیچ‌کدام از آدرس‌های شناخته‌شده پاسخ نداد (' . $why
+                . '). آدرس درست را از DevTools بردارید و در فیلد زیر بگذارید.',
+        );
+    }
+
+    private static function render_intraday_section($notice) {
+        $settings = GC_Storage::get_settings();
+        $source = isset($settings['intraday_source']) ? $settings['intraday_source'] : 'auto';
+        $endpoint = isset($settings['intraday_endpoint']) ? $settings['intraday_endpoint'] : '';
+
+        echo '<hr><h2 class="title">سرویس قیمت درون‌روزی</h2>';
+        echo '<p class="description">گزارش‌های «هر ۱۰ دقیقه / هر ۱ ساعت / هر تغییر قیمت»'
+            . ' قیمت‌های همان بازه را از سرویس نمودار <code>tgju.org</code> استخراج می‌کنند.'
+            . ' آن سرویس یک API رسمی و مستند نیست، پس افزونه چند آدرس شناخته‌شده را امتحان'
+            . ' می‌کند و هرکدام جواب داد همان را ذخیره می‌کند. دکمه «بررسی سرویس» همین'
+            . ' آزمایش را انجام می‌دهد.</p>';
+
+        if ($notice) {
+            $class = $notice['type'] === 'error' ? 'notice-error' : 'notice-success';
+            echo '<div class="notice ' . esc_attr($class) . ' is-dismissible"><p>'
+                . esc_html($notice['text']) . '</p></div>';
+        }
+
+        echo '<form method="post">';
+        wp_nonce_field(self::NONCE_ACTION_INTRADAY, 'goldcrawler_intraday_nonce');
+
+        echo '<table class="form-table"><tbody>';
+        echo '<tr><th scope="row"><label for="goldcrawler-intraday-source">منبع داده</label></th><td>';
+        echo '<select id="goldcrawler-intraday-source" name="goldcrawler_intraday_source">';
+        foreach (array(
+            'auto' => 'خودکار (اول TGJU، بعد نمونه‌های ثبت‌شده)',
+            'tgju' => 'فقط استخراج از TGJU',
+            'recorded' => 'فقط نمونه‌های ثبت‌شده روی هاست',
+        ) as $value => $label) {
+            echo '<option value="' . esc_attr($value) . '"' . selected($source, $value, false)
+                . '>' . esc_html($label) . '</option>';
+        }
+        echo '</select>';
+        echo '<p class="description">«خودکار» پیشنهاد می‌شود. اگر می‌خواهید مطمئن شوید داده'
+            . ' واقعاً از TGJU می‌آید و خطا پنهان نمی‌شود، «فقط استخراج از TGJU» را بگذارید.</p>';
+        echo '</td></tr>';
+
+        echo '<tr><th scope="row"><label for="goldcrawler-intraday-endpoint">آدرس سرویس نمودار</label></th><td>';
+        echo '<input type="text" id="goldcrawler-intraday-endpoint" name="goldcrawler_intraday_endpoint"'
+            . ' class="large-text code" dir="ltr" value="' . esc_attr($endpoint) . '"'
+            . ' placeholder="خودکار — خالی بگذارید">';
+        echo '<p class="description">خالی بگذارید تا افزونه خودش آدرس‌های شناخته‌شده را امتحان کند.'
+            . ' اگر بررسی هیچ آدرسی پیدا نکرد، آدرس درست را از DevTools مرورگر بردارید'
+            . ' (تب <b>Network</b>، فیلتر <b>Fetch/XHR</b>، هنگام بازکردن نمودار درون‌روزی در'
+            . ' tgju.org) و اینجا بگذارید. به‌جای مقادیر، این چهار متغیر را بنویسید:'
+            . ' <code dir="ltr">{symbol}</code>، <code dir="ltr">{resolution}</code>،'
+            . ' <code dir="ltr">{from}</code> و <code dir="ltr">{to}</code>.<br>نمونه:'
+            . ' <code dir="ltr">https://platform.tgju.org/fa/tvdata/history?symbol={symbol}&amp;resolution={resolution}&amp;from={from}&amp;to={to}</code></p>';
+        echo '</td></tr>';
+        echo '</tbody></table>';
+
+        echo '<p class="submit">'
+            . '<button type="submit" name="goldcrawler_save_intraday" class="button button-primary">ذخیره</button> '
+            . '<button type="submit" name="goldcrawler_probe_intraday" class="button">بررسی سرویس</button>'
+            . '</p>';
+        echo '</form>';
     }
 
     private static function render_symbols_section($notice) {

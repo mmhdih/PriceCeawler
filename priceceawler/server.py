@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-from . import intraday
+from . import intraday, tgju_intraday
 from .crawler import Crawler
 from .fonts import font_css
 from .jalali import JalaliDate
@@ -240,6 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/symbols"): self._api_add_symbol,
             ("POST", "/api/crawl"): self._api_crawl,
             ("POST", "/api/sample"): self._api_sample,
+            ("POST", "/api/probe"): self._api_probe,
             ("POST", "/api/shutdown"): self._api_shutdown,
         }
 
@@ -291,6 +292,7 @@ class Handler(BaseHTTPRequestHandler):
                 "resolutions": list(intraday.RESOLUTIONS),
                 "intraday": intraday.summary(),
                 "intradayRetentionDays": intraday.RETENTION_DAYS,
+                "intradayEndpoints": [e.name for e in tgju_intraday.CANDIDATES],
                 "settings": self.server.settings.as_dict(),
                 "archive": crawler.archive.summary(),
             }
@@ -388,6 +390,12 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._body()
         keys = payload.get("symbols") or self.server.settings.get("symbols")
         self._send_json({"ok": True, **self.server.crawler.sample_intraday(keys)})
+
+    def _api_probe(self) -> None:
+        """Reports which TGJU chart endpoint this machine can reach."""
+        payload = self._body()
+        keys = payload.get("symbols") or self.server.settings.get("symbols")
+        self._send_json({"ok": True, **self.server.crawler.probe_intraday(keys)})
 
     def _api_shutdown(self) -> None:
         self._send_json({"ok": True})

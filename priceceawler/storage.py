@@ -124,6 +124,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "intraday_recording": False,
     "resolution": "daily",
     "last_sample": 0,            # unix time of the last sampling pass
+    # Where intraday rows come from. "auto" asks TGJU's chart service first
+    # and only falls back to locally recorded samples; "tgju" and "recorded"
+    # force one source so a failure is visible instead of silently papered
+    # over by the other.
+    "intraday_source": "auto",   # "auto" | "tgju" | "recorded"
+    # Pinned chart endpoint: a candidate name, or a full URL template
+    # containing {symbol}/{resolution}/{from}/{to}. Empty = probe candidates.
+    "intraday_endpoint": "",
 }
 
 

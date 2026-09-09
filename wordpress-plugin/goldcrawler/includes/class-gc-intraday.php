@@ -1,17 +1,21 @@
 <?php
 /**
- * Intraday price samples: storage, retention and resampling.
+ * Intraday resampling, plus optional local sampling of live prices.
  *
- * The TGJU history endpoint the rest of this plugin uses returns ONE row per
- * calendar day, so 10-minute / hourly / per-change prices cannot be derived
- * from it - they have to be sampled as time passes and kept. This class owns
- * that: GC_Sampler appends a (timestamp, price) sample per symbol every few
- * minutes, and aggregate() turns whatever samples exist in a range into the
- * resolution the user asked for.
+ * Two things live here. The important one is *resampling*: aggregate() and
+ * aggregate_candles() turn observations into the resolution the user asked
+ * for - 10-minute and hourly OHLC buckets, or one row per price change. Both
+ * the candles extracted from TGJU (see GC_TGJU_Intraday) and any locally
+ * recorded samples go through this same bucketing, so the two sources can
+ * never disagree about where a bucket starts.
  *
- * Files live one-per-symbol-per-day (uploads/goldcrawler/intraday/<symbol>/
- * <YYYY-MM-DD>.json) so a day's worth of samples is a small read and
- * retention pruning is just "delete files whose name is older than N days".
+ * The secondary one is a local sample store: record() appends a
+ * (timestamp, price) observation per symbol, kept one file per symbol per day
+ * (uploads/goldcrawler/intraday/<symbol>/<YYYY-MM-DD>.json) so a day is a
+ * small read and retention pruning is just "delete files whose name is older
+ * than N days". That store is a *fallback* for when the chart service cannot
+ * be reached - it only ever covers time that already passed while sampling
+ * was switched on, which is why extraction is preferred.
  *
  * All calendar/clock rendering is done in Tehran time, not the server's, so
  * a host in another timezone still buckets by the local trading clock.
@@ -366,6 +370,90 @@ final class GC_Intraday {
             'status' => GC_Report::STATUS_LIVE,
             'live' => true,
         );
+    }
+
+    /**
+     * Resample OHLC bars (extracted from TGJU) into the requested resolution.
+     *
+     * Distinct from aggregate(), which takes single observed prices: when the
+     * source already gives bars, a bucket's high is the max of the bars' highs
+     * and its low the min of their lows. Collapsing them to closes first would
+     * quietly discard the extremes inside each bucket.
+     *
+     * @param array[] $candles each: ts, open, high, low, close
+     */
+    public static function aggregate_candles($candles, $resolution, $decimals = 0) {
+        if (!is_array($candles) || !$candles) {
+            return array();
+        }
+        usort($candles, function ($a, $b) {
+            return (int) $a['ts'] <=> (int) $b['ts'];
+        });
+
+        if ($resolution === self::RES_TICK) {
+            // "Every change" over historical bars means one row per bar whose
+            // close differs from the previous kept one.
+            $rows = array();
+            $previous = null;
+            foreach ($candles as $candle) {
+                $price = $candle['close'] !== null ? $candle['close'] : $candle['open'];
+                if ($price === null) {
+                    continue;
+                }
+                $price = (float) $price;
+                if ($previous !== null && self::same_price($price, $previous, $decimals)) {
+                    continue;
+                }
+                $row = self::make_row(
+                    (int) $candle['ts'], $price, $price, $price, $price, $price, 1, $decimals
+                );
+                $row['change'] = $previous === null
+                    ? null : self::round_value($price - $previous, $decimals);
+                $rows[] = $row;
+                $previous = $price;
+            }
+            return $rows;
+        }
+
+        if (!isset(self::BUCKET_SECONDS[$resolution])) {
+            return array();
+        }
+
+        $buckets = array();
+        foreach ($candles as $candle) {
+            $start = self::bucket_start((int) $candle['ts'], $resolution);
+            if (!isset($buckets[$start])) {
+                $buckets[$start] = array();
+            }
+            $buckets[$start][] = $candle;
+        }
+        ksort($buckets);
+
+        $rows = array();
+        foreach ($buckets as $start => $bars) {
+            $opens = $closes = $highs = $lows = array();
+            foreach ($bars as $bar) {
+                if ($bar['open'] !== null) { $opens[] = (float) $bar['open']; }
+                if ($bar['close'] !== null) { $closes[] = (float) $bar['close']; }
+                if ($bar['high'] !== null) { $highs[] = (float) $bar['high']; }
+                if ($bar['low'] !== null) { $lows[] = (float) $bar['low']; }
+            }
+            if (!$closes && !$opens) {
+                continue;
+            }
+            if (!$highs) { $highs = $closes ? $closes : $opens; }
+            if (!$lows) { $lows = $closes ? $closes : $opens; }
+
+            $open = $opens ? $opens[0] : $closes[0];
+            $close = $closes ? $closes[count($closes) - 1] : $opens[count($opens) - 1];
+            $prices = $closes ? $closes : $opens;
+
+            $rows[] = self::make_row(
+                $start, $open, min($lows), max($highs), $close,
+                array_sum($prices) / count($prices), count($bars), $decimals
+            );
+        }
+        return $rows;
     }
 
     /**

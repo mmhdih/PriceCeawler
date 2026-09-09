@@ -7,7 +7,7 @@ from datetime import datetime
 os.environ.setdefault("PRICECEAWLER_DATA_DIR", tempfile.mkdtemp(prefix="pc-crawler-"))
 
 from priceceawler import crawler as crawler_module  # noqa: E402
-from priceceawler import intraday  # noqa: E402
+from priceceawler import intraday, tgju_intraday  # noqa: E402
 from priceceawler.crawler import Crawler  # noqa: E402
 from priceceawler.jalali import JalaliDate  # noqa: E402
 from priceceawler.storage import Settings  # noqa: E402
@@ -114,12 +114,20 @@ class TestBuild(unittest.TestCase):
 
 
 class TestBuildAt(unittest.TestCase):
-    """Daily goes to TGJU; the intraday resolutions read our own samples."""
+    """The recorded-samples path: daily goes to TGJU, intraday to our store.
+
+    Extraction is forced off here so these cases exercise the local store;
+    TestIntradaySource covers the extraction path and the choice between them.
+    """
 
     def setUp(self):
         self.crawler = Crawler(Settings(tempfile.mktemp(suffix=".json")))
+        self.crawler.settings.update({"intraday_source": "recorded"})
         self.today = JalaliDate.today()
         self.calls = []
+        # The intraday store is shared by the whole suite, so each test needs
+        # its own symbol key or another test's samples leak in.
+        self.key = f"at_{self.id().rsplit('.', 1)[-1]}"
 
         def points_for(symbol, force=False):
             self.calls.append(symbol.key)
@@ -138,7 +146,7 @@ class TestBuildAt(unittest.TestCase):
         self.assertEqual(self.calls, ["geram18"])
 
     def test_intraday_never_touches_tgju(self):
-        self.crawler.build_at(["geram18"], self.today, self.today, resolution="10m")
+        self.crawler.build_at([self.key], self.today, self.today, resolution="10m")
         self.assertEqual(self.calls, [])
 
     def test_intraday_without_samples_says_to_turn_recording_on(self):
@@ -160,7 +168,7 @@ class TestBuildAt(unittest.TestCase):
         self.assertIn("ثبت خودکار روشن است", result.errors[0]["message"])
 
     def test_a_range_outside_the_recorded_days_names_the_recorded_window(self):
-        symbol = self.crawler.resolve(["geram18"])[0]
+        symbol = self.crawler.resolve([self.key])[0]
         gregorian = self.today.to_gregorian()
         base = int(
             datetime(gregorian.year, gregorian.month, gregorian.day, 10, 0,
@@ -169,14 +177,14 @@ class TestBuildAt(unittest.TestCase):
         intraday.record(symbol.key, 7_000_000, base)
 
         old_day = self.today.add_days(-200)
-        result = self.crawler.build_at(["geram18"], old_day, old_day, resolution="1h")
+        result = self.crawler.build_at([self.key], old_day, old_day, resolution="1h")
         message = result.errors[0]["message"]
         persian = str(self.today).translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
         self.assertIn(persian, message)
         self.assertIn("بیرون از این محدوده", message)
 
     def test_intraday_builds_rows_from_recorded_samples(self):
-        symbol = self.crawler.resolve(["geram18"])[0]
+        symbol = self.crawler.resolve([self.key])[0]
         gregorian = self.today.to_gregorian()
         base = int(
             datetime(gregorian.year, gregorian.month, gregorian.day, 10, 0,
@@ -186,12 +194,141 @@ class TestBuildAt(unittest.TestCase):
         intraday.record(symbol.key, 7_150_000, base + 900)
 
         result = self.crawler.build_at(
-            ["geram18"], self.today, self.today, resolution="10m"
+            [self.key], self.today, self.today, resolution="10m"
         )
         self.assertEqual(self.calls, [])
         rows = result.series[0].rows
         self.assertEqual([row["time"] for row in rows], ["10:00", "10:10"])
         self.assertEqual(result.series[0].stats["last"], 7_150_000)
+
+
+class TestIntradaySource(unittest.TestCase):
+    """Extraction from TGJU is primary; recorded samples are the fallback."""
+
+    def setUp(self):
+        self.crawler = Crawler(Settings(tempfile.mktemp(suffix=".json")))
+        self.today = JalaliDate.today()
+        gregorian = self.today.to_gregorian()
+        self.base = int(
+            datetime(gregorian.year, gregorian.month, gregorian.day, 11, 0,
+                     tzinfo=intraday.TEHRAN).timestamp()
+        )
+        self.fetches = []
+        # The intraday store is shared by the whole suite, so each test needs
+        # its own symbol key or another test's samples leak in.
+        self.key = f"src_{self.id().rsplit('.', 1)[-1]}"
+        self.crawler.points_for = lambda symbol, force=False: (points(), False)
+
+    def stub_fetch(self, candles=None, error=None):
+        """Replace the network layer; None candles means "nothing found"."""
+        def fetch(symbol, from_ts, to_ts, *, endpoints=None, **kwargs):
+            tried = list(endpoints or tgju_intraday.CANDIDATES)
+            self.fetches.append((symbol.key, from_ts, to_ts, [e.name for e in tried]))
+            if error is not None:
+                raise error
+            # Report the endpoint we were actually given, as the real
+            # fetch_candles does - otherwise pinning cannot be tested.
+            return (candles or []), tried[0], "1"
+        crawler_module.tgju_intraday.fetch_candles = fetch
+
+    def tearDown(self):
+        crawler_module.tgju_intraday.fetch_candles = _ORIGINAL_FETCH_CANDLES
+
+    def bars(self):
+        Candle = tgju_intraday.Candle
+        return [
+            Candle(self.base, 7_000_000, 7_050_000, 6_990_000, 7_010_000),
+            Candle(self.base + 60, 7_010_000, 7_090_000, 7_000_000, 7_080_000),
+            Candle(self.base + 900, 7_080_000, 7_100_000, 7_070_000, 7_095_000),
+        ]
+
+    def test_rows_come_from_extraction_without_any_recording(self):
+        self.stub_fetch(self.bars())
+        result = self.crawler.build_at(
+            [self.key], self.today, self.today, resolution="10m"
+        )
+        self.assertEqual(result.errors, [])
+        rows = result.series[0].rows
+        self.assertEqual([r["time"] for r in rows], ["11:00", "11:10"])
+        # The first bucket merged two bars and kept their true extremes.
+        self.assertEqual(rows[0]["samples"], 2)
+        self.assertEqual(rows[0]["high"], 7_090_000)
+        self.assertEqual(rows[0]["low"], 6_990_000)
+
+    def test_extraction_is_asked_for_the_requested_range(self):
+        self.stub_fetch(self.bars())
+        self.crawler.build_at([self.key], self.today, self.today, resolution="1h")
+        _, from_ts, to_ts, _ = self.fetches[0]
+        self.assertEqual(intraday.local_time(from_ts), "00:00")
+        self.assertEqual(intraday.local_time(to_ts), "23:59")
+
+    def test_the_working_endpoint_is_pinned_so_later_calls_skip_probing(self):
+        self.stub_fetch(self.bars())
+        self.crawler.build_at([self.key], self.today, self.today, resolution="10m")
+        self.assertEqual(
+            self.crawler.settings.get("intraday_endpoint"),
+            tgju_intraday.CANDIDATES[0].name,
+        )
+        # A second call passes only the pinned endpoint down.
+        self.crawler.build_at([self.key], self.today, self.today, resolution="10m")
+        self.assertEqual(self.fetches[-1][3], [tgju_intraday.CANDIDATES[0].name])
+
+    def test_recorded_samples_are_used_when_extraction_finds_nothing(self):
+        intraday.record(self.key, 6_500_000, self.base)
+        intraday.record(self.key, 6_600_000, self.base + 120)
+        self.stub_fetch([])
+        result = self.crawler.build_at(
+            [self.key], self.today, self.today, resolution="10m"
+        )
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.series[0].rows[0]["close"], 6_600_000)
+
+    def test_an_extraction_error_surfaces_when_there_is_no_fallback(self):
+        self.stub_fetch(error=TgjuError("سرویس نمودار پاسخ نداد."))
+        result = self.crawler.build_at(
+            ["never_recorded_sym"], self.today, self.today, resolution="10m"
+        )
+        self.assertEqual(result.series, [])
+        self.assertIn("سرویس نمودار پاسخ نداد", result.errors[0]["message"])
+
+    def test_source_recorded_never_touches_the_network(self):
+        intraday.record(self.key, 6_700_000, self.base)
+        self.crawler.settings.update({"intraday_source": "recorded"})
+        self.stub_fetch(self.bars())
+        result = self.crawler.build_at(
+            [self.key], self.today, self.today, resolution="10m"
+        )
+        self.assertEqual(self.fetches, [])
+        self.assertEqual(result.series[0].rows[0]["close"], 6_700_000)
+
+    def test_source_tgju_does_not_fall_back_to_recorded(self):
+        """Forcing the source makes a failure visible instead of masked."""
+        intraday.record(self.key, 6_800_000, self.base)
+        self.crawler.settings.update({"intraday_source": "tgju"})
+        self.stub_fetch([])
+        result = self.crawler.build_at(
+            [self.key], self.today, self.today, resolution="10m"
+        )
+        self.assertEqual(result.series, [])
+        self.assertTrue(result.errors)
+
+    def test_a_custom_url_template_is_passed_through_and_not_overwritten(self):
+        template = "https://x/history?symbol={symbol}&resolution={resolution}&from={from}&to={to}"
+        self.crawler.settings.update({"intraday_endpoint": template})
+        self.stub_fetch(self.bars())
+        self.crawler.build_at([self.key], self.today, self.today, resolution="10m")
+        self.assertEqual(self.fetches[-1][3], ["custom"])
+        # A user-supplied URL must survive a successful fetch.
+        self.assertEqual(self.crawler.settings.get("intraday_endpoint"), template)
+
+    def test_daily_still_bypasses_the_intraday_path_entirely(self):
+        self.stub_fetch(self.bars())
+        result = self.crawler.build_at(
+            [self.key], self.today, self.today, resolution="daily"
+        )
+        self.assertEqual(self.fetches, [])
+        self.assertEqual(result.resolution, "daily")
+        self.assertTrue(result.series)
 
 
 class TestSampleIntraday(unittest.TestCase):
@@ -300,6 +437,7 @@ class TestCaching(unittest.TestCase):
 
 
 _ORIGINAL_FETCH = crawler_module.fetch_history
+_ORIGINAL_FETCH_CANDLES = crawler_module.tgju_intraday.fetch_candles
 
 if __name__ == "__main__":
     unittest.main()

@@ -98,16 +98,25 @@
       <div class="block__head"><h2>دقت زمانی</h2></div>
       <div class="chips" id="resolutionChips"></div>
       <p class="hint" id="resolutionHint"></p>
-      <label class="switch" id="intradaySwitch">
-        <input type="checkbox" id="intradayRecording">
-        <span class="switch__track"><span class="switch__thumb"></span></span>
-        <span class="switch__label">
-          ثبت خودکار قیمت هر ۱۰ دقیقه
-          <small>لازمهٔ گزارش‌های درون‌روزی؛ تا وقتی برنامه باز است اجرا می‌شود و داده‌های قدیمی‌تر از ۳۰ روز خودکار پاک می‌شوند.</small>
-        </span>
-      </label>
-      <button class="btn btn--soft" id="sampleBtn" type="button">ثبت نمونه همین حالا</button>
-      <div class="archive" id="intradayList"></div>
+      <button class="btn btn--soft" id="probeBtn" type="button">بررسی سرویس درون‌روزی TGJU</button>
+      <p class="hint" id="probeResult" hidden></p>
+
+      <details class="custom-symbol">
+        <summary>ثبت محلی (اختیاری)</summary>
+        <div class="custom-symbol__body">
+          <p class="hint">اگر سرویس نمودار TGJU در دسترس نباشد، می‌توانید قیمت‌ها را روی همین رایانه ثبت کنید. این کار داده گذشته را برنمی‌گرداند؛ فقط از لحظه روشن‌کردن به بعد ثبت می‌شود.</p>
+          <label class="switch" id="intradaySwitch">
+            <input type="checkbox" id="intradayRecording">
+            <span class="switch__track"><span class="switch__thumb"></span></span>
+            <span class="switch__label">
+              ثبت خودکار قیمت هر ۱۰ دقیقه
+              <small>تا وقتی برنامه باز است اجرا می‌شود؛ داده‌های قدیمی‌تر از ۳۰ روز خودکار پاک می‌شوند.</small>
+            </span>
+          </label>
+          <button class="btn btn--soft" id="sampleBtn" type="button">ثبت نمونه همین حالا</button>
+          <div class="archive" id="intradayList"></div>
+        </div>
+      </details>
     </section>
 
     <section class="block">

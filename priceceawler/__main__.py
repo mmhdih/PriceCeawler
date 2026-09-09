@@ -126,6 +126,42 @@ def run_sample(symbols: list[str] | None) -> int:
     return 1 if result["errors"] and not result["recorded"] else 0
 
 
+def run_probe_intraday(symbols: list[str] | None) -> int:
+    """Report which TGJU chart endpoint answers from this machine.
+
+    The chart service is undocumented, so rather than hard-coding one guess
+    this tries the known shapes and prints what actually worked. The winner
+    is saved to settings, so intraday reports then use it directly.
+    """
+    crawler = Crawler()
+    result = crawler.probe_intraday(symbols)
+    print(BANNER)
+    print(f"  نماد آزمایشی: {result['symbol']}\n")
+    for row in result["attempts"]:
+        mark = "✔" if row.get("ok") else "✖"
+        detail = (
+            f"{row.get('candles')} کندل، آخرین قیمت {row.get('sample_close')}"
+            if row.get("ok") else row.get("error", "بدون داده")
+        )
+        print(f"  {mark} {row['endpoint']} / resolution={row['resolution']} — {detail}")
+        print(f"      {row['url']}")
+
+    working = result["working"]
+    if working:
+        print(f"\n✔ سرویس درون‌روزی کار می‌کند: {working['endpoint']} "
+              f"(resolution={working['resolution']}) و در تنظیمات ذخیره شد.\n", flush=True)
+        return 0
+    print(
+        "\n✖ هیچ‌کدام از آدرس‌های شناخته‌شده پاسخ نداد.\n"
+        "  آدرس درست را از DevTools مرورگر (تب Network، فیلتر Fetch/XHR، هنگام\n"
+        "  بازکردن نمودار درون‌روزی) بردارید و در تنظیمات، فیلد «آدرس سرویس\n"
+        "  نمودار» را با آن پر کنید — با {symbol}، {resolution}، {from} و {to}\n"
+        "  به‌جای مقادیر.\n",
+        flush=True,
+    )
+    return 1
+
+
 def run_export(args: argparse.Namespace) -> int:
     """Build a report from the command line without opening the UI."""
     settings = Settings()
@@ -148,7 +184,10 @@ def run_export(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        result = crawler.build(keys, start, end, fill_gaps=not args.no_fill)
+        result = crawler.build_at(
+            keys, start, end, fill_gaps=not args.no_fill,
+            resolution=getattr(args, "resolution", "daily"),
+        )
     except TgjuError as exc:
         print(f"✖ {exc}")
         return 1
@@ -168,7 +207,10 @@ def run_export(args: argparse.Namespace) -> int:
 
     target = args.output
     if target is None:
-        name = f"TGJU-{str(start).replace('/', '-')}_{str(end).replace('/', '-')}.{fmt}"
+        suffix = f"-{args.resolution}" if args.resolution != "daily" else ""
+        name = (
+            f"TGJU-{str(start).replace('/', '-')}_{str(end).replace('/', '-')}{suffix}.{fmt}"
+        )
         target = str(data_dir() / "exports" / name)
     with open(target, "wb") as handle:
         handle.write(payload)
@@ -239,12 +281,22 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--format", choices=("xlsx", "csv", "json"), default="xlsx")
     export.add_argument("--output", help="مسیر فایل خروجی")
     export.add_argument("--no-fill", action="store_true", help="روزهای بدون معامله پر نشوند")
+    export.add_argument(
+        "--resolution", choices=("daily", "10m", "1h", "tick"), default="daily",
+        help="دقت زمانی خروجی: روزانه یا هر ۱۰ دقیقه / ۱ ساعت / هر تغییر قیمت",
+    )
 
     sample = subparsers.add_parser(
         "sample",
         help="ثبت یک نمونه قیمت درون‌روزی (برای Task Scheduler هر ۱۰ دقیقه)",
     )
     sample.add_argument("--symbols", nargs="*", help="فهرست شناسه نمادها")
+
+    probe = subparsers.add_parser(
+        "probe-intraday",
+        help="بررسی اینکه سرویس نمودار درون‌روزی TGJU از این رایانه پاسخ می‌دهد یا نه",
+    )
+    probe.add_argument("--symbols", nargs="*", help="نمادی که برای آزمایش استفاده شود")
 
     doctor = subparsers.add_parser("doctor", help="بررسی سلامت برنامه و اتصال به TGJU")
     doctor.add_argument("--offline", action="store_true", help="اتصال شبکه بررسی نشود")
@@ -260,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_export(args)
     if args.command == "sample":
         return run_sample(args.symbols)
+    if args.command == "probe-intraday":
+        return run_probe_intraday(args.symbols)
     if args.command == "doctor":
         return run_doctor(args.offline)
     return run_gui(args.host, args.port, not args.no_browser)

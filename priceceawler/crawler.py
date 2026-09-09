@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Sequence
 
-from . import intraday
+from . import intraday, tgju_intraday
 from .jalali import JalaliDate
 from .report import Series, build_series
 from .storage import Archive, Settings, data_dir, read_json, write_json
@@ -210,24 +210,72 @@ class Crawler:
             daily.resolution = resolution
             return daily
 
+        source = str(self.settings.get("intraday_source") or "auto")
+        endpoints = tgju_intraday.endpoints_from_setting(
+            str(self.settings.get("intraday_endpoint") or "")
+        )
+        from_ts, to_ts = intraday.range_bounds(start, end)
+
         series: list[Series] = []
         errors: list[dict[str, str]] = []
         recording = bool(self.settings.get("intraday_recording"))
+
         for symbol in self.resolve(keys):
-            rows = intraday.build_rows(symbol, start, end, resolution)
+            rows: list[dict] = []
+            fetch_error: str | None = None
+
+            # Extraction first: it can answer for any past range, whereas
+            # recorded samples only cover time the sampler was running for.
+            if source in ("auto", "tgju"):
+                try:
+                    candles, endpoint, native = tgju_intraday.fetch_candles(
+                        symbol, from_ts, to_ts, endpoints=endpoints
+                    )
+                    rows = intraday.aggregate_candles(candles, resolution, symbol.decimals)
+                    if rows:
+                        # Remember what worked so later requests skip probing.
+                        self._pin_endpoint(endpoint.name)
+                except TgjuError as exc:
+                    fetch_error = str(exc)
+
+            if not rows and source in ("auto", "recorded"):
+                rows = intraday.build_rows(symbol, start, end, resolution)
+
             if not rows:
-                # Say why there is nothing and what to do about it - "no
-                # samples recorded" alone leaves the user with no next step.
-                errors.append(
-                    {
-                        "symbol": symbol.key,
-                        "name": symbol.name,
-                        "message": intraday.explain_empty(symbol, recording),
-                    }
-                )
+                # Say why there is nothing and what to do about it - "no data"
+                # alone leaves the user with no next step.
+                if source == "recorded":
+                    message = intraday.explain_empty(symbol, recording)
+                elif fetch_error:
+                    message = f"«{symbol.name}»: {fetch_error}"
+                else:
+                    message = (
+                        f"برای «{symbol.name}» در این بازه داده درون‌روزی از TGJU دریافت نشد."
+                    )
+                errors.append({"symbol": symbol.key, "name": symbol.name, "message": message})
                 continue
+
             series.append(Series(symbol, rows, intraday.stats(rows, symbol)))
         return CrawlResult(series, errors, [], resolution)
+
+    def _pin_endpoint(self, name: str) -> None:
+        """Persist the chart endpoint that answered, so we stop probing."""
+        if name == "custom" or self.settings.get("intraday_endpoint") == name:
+            return  # a user-supplied URL is theirs to keep; no churn either
+        try:
+            self.settings.update({"intraday_endpoint": name})
+        except OSError:  # pragma: no cover - a read-only data dir must not fail a report
+            pass
+
+    def probe_intraday(self, keys: Sequence[str] | None = None) -> dict:
+        """Report which TGJU chart endpoint this machine can actually reach."""
+        keys = list(keys or self.settings.get("symbols") or ["geram18"])
+        symbol = self.resolve(keys[:1])[0]
+        report = tgju_intraday.probe(symbol)
+        working = next((row for row in report if row.get("ok")), None)
+        if working:
+            self._pin_endpoint(working["endpoint"])
+        return {"symbol": symbol.key, "working": working, "attempts": report}
 
     def sample_intraday(self, keys: Sequence[str] | None = None) -> dict:
         """Record one intraday sample per watched symbol.

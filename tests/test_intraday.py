@@ -211,6 +211,94 @@ class TestAggregate(unittest.TestCase):
         self.assertEqual(rows[0]["average"], 3301.67)
 
 
+class Bar:
+    """Minimal stand-in for tgju_intraday.Candle."""
+
+    def __init__(self, ts, open_, high, low, close):
+        self.ts, self.open, self.high, self.low, self.close = ts, open_, high, low, close
+
+
+class TestAggregateCandles(unittest.TestCase):
+    """Bars carry their own extremes, so a bucket must not use closes alone."""
+
+    def setUp(self):
+        base = tehran(2025, 8, 19, 9, 0, 0)
+        # Three 1-minute bars inside one 10-minute bucket. The high and low
+        # happen *inside* bars, never at a close.
+        self.bars = [
+            Bar(base, 100, 140, 95, 110),
+            Bar(base + 60, 110, 180, 90, 120),
+            Bar(base + 120, 120, 130, 105, 115),
+        ]
+
+    def test_no_bars_gives_no_rows(self):
+        self.assertEqual(intraday.aggregate_candles([], "10m"), [])
+
+    def test_a_bucket_takes_the_extremes_of_the_bars_not_of_the_closes(self):
+        row = intraday.aggregate_candles(self.bars, "10m")[0]
+        self.assertEqual(row["open"], 100)    # first bar's open
+        self.assertEqual(row["high"], 180)    # max of highs, not max of closes
+        self.assertEqual(row["low"], 90)      # min of lows, not min of closes
+        self.assertEqual(row["close"], 115)   # last bar's close
+        self.assertEqual(row["samples"], 3)   # three source bars
+
+    def test_the_average_is_the_mean_of_the_bar_closes(self):
+        row = intraday.aggregate_candles(self.bars, "10m")[0]
+        self.assertEqual(row["average"], round((110 + 120 + 115) / 3))
+
+    def test_bars_are_bucketed_on_the_tehran_clock(self):
+        base = tehran(2025, 8, 19, 9, 9, 0)
+        rows = intraday.aggregate_candles(
+            [Bar(base, 1, 1, 1, 1), Bar(base + 120, 2, 2, 2, 2)], "10m"
+        )
+        self.assertEqual([r["time"] for r in rows], ["09:00", "09:10"])
+
+    def test_hourly_merges_every_bucket_of_the_hour(self):
+        rows = intraday.aggregate_candles(self.bars, "1h")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["time"], "09:00")
+        self.assertEqual(rows[0]["samples"], 3)
+
+    def test_out_of_order_bars_are_sorted_first(self):
+        rows = intraday.aggregate_candles(list(reversed(self.bars)), "10m")
+        self.assertEqual(rows[0]["open"], 100)
+        self.assertEqual(rows[0]["close"], 115)
+
+    def test_bars_missing_high_and_low_fall_back_to_their_close(self):
+        base = tehran(2025, 8, 19, 9, 0, 0)
+        row = intraday.aggregate_candles(
+            [Bar(base, None, None, None, 250)], "10m"
+        )[0]
+        self.assertEqual((row["open"], row["high"], row["low"], row["close"]),
+                         (250, 250, 250, 250))
+
+    def test_a_bar_with_no_price_at_all_is_skipped(self):
+        base = tehran(2025, 8, 19, 9, 0, 0)
+        self.assertEqual(intraday.aggregate_candles([Bar(base, None, 1, 1, None)], "10m"), [])
+
+    def test_tick_keeps_one_row_per_changed_close(self):
+        base = tehran(2025, 8, 19, 9, 0, 0)
+        bars = [
+            Bar(base, 100, 100, 100, 100),
+            Bar(base + 60, 100, 100, 100, 100),   # unchanged -> dropped
+            Bar(base + 120, 100, 100, 100, 130),
+        ]
+        rows = intraday.aggregate_candles(bars, "tick")
+        self.assertEqual([r["close"] for r in rows], [100, 130])
+        self.assertEqual([r["change"] for r in rows], [None, 30])
+
+    def test_an_unknown_resolution_yields_nothing(self):
+        self.assertEqual(intraday.aggregate_candles(self.bars, "daily"), [])
+
+    def test_decimals_are_respected(self):
+        base = tehran(2025, 8, 19, 9, 0, 0)
+        row = intraday.aggregate_candles(
+            [Bar(base, 3301.111, 3302.888, 3300.222, 3301.555)], "10m", 2
+        )[0]
+        self.assertEqual(row["high"], 3302.89)
+        self.assertEqual(row["low"], 3300.22)
+
+
 class TestBuildRowsAndStats(unittest.TestCase):
     def setUp(self):
         self.symbol = custom_symbol("build_rows_test", "نماد آزمایشی", "IRR", None, 0)
