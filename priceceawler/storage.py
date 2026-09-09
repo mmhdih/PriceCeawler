@@ -132,6 +132,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Pinned chart endpoint: a candidate name, or a full URL template
     # containing {symbol}/{resolution}/{from}/{to}. Empty = probe candidates.
     "intraday_endpoint": "",
+    # The chart resolution code that actually returned sub-daily bars. Pinned
+    # after a success so later requests do not re-try every spelling; the
+    # granularity check still validates whatever comes back.
+    "intraday_native": "",
 }
 
 

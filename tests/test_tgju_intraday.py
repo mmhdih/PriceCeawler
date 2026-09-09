@@ -244,15 +244,23 @@ class TestFetchCandles(unittest.TestCase):
 
         def opener(request, timeout=None):
             calls.append(request.full_url)
-            # Each window answers with one candle inside itself.
+            # Each window answers with a run of 1-minute bars inside itself,
+            # so the stitched result is genuinely intraday.
             start = int(request.full_url.split("from=")[1].split("&")[0])
-            return FakeResponse(json.dumps(udf([start + 60], [10.0])).encode())
+            times = [start + 60 * i for i in range(1, 6)]
+            return FakeResponse(json.dumps(udf(times, [10.0] * len(times))).encode())
 
         candles, _, _ = ti.fetch_candles(
             OUNCE, base, base + span * 2 + 100, opener=opener
         )
         self.assertGreaterEqual(len(calls), 3)
-        self.assertEqual(len(candles), 3)
+        # 5 bars from each full window, plus the single bar that fits inside
+        # the 98-second remainder window - anything past `to` is clipped.
+        self.assertEqual(len(candles), 11)
+        # Bars from the first and last window are both present, in order.
+        self.assertEqual(candles[0].ts, base + 60)
+        self.assertGreater(candles[-1].ts, base + span * 2)
+        self.assertEqual(candles, sorted(candles, key=lambda c: c.ts))
 
     def test_an_inverted_range_is_rejected_before_any_request(self):
         calls: list[str] = []
@@ -287,12 +295,122 @@ def in_window_opener(match):
     return fake
 
 
+class TestGranularity(unittest.TestCase):
+    """The endpoint answers an unrecognised resolution with DAILY bars.
+
+    Regression cover for a real failure: asking for resolution=1 over a week
+    returned one bar per day, stamped 00:00 UTC (03:30 Tehran), and the app
+    relabelled them as 10-minute rows. Rows are not evidence of granularity.
+    """
+
+    def daily_bars(self, count=5, start=1757030400):
+        # 1757030400 is exactly a midnight UTC, like the real response.
+        return [ti.Candle(start + i * 86400, 1.0, 1.0, 1.0, 1.0) for i in range(count)]
+
+    def minute_bars(self, count=5, start=1757037600):
+        return [ti.Candle(start + i * 60, 1.0, 1.0, 1.0, 1.0) for i in range(count)]
+
+    def test_median_gap_ignores_a_single_long_market_gap(self):
+        bars = self.minute_bars(5)
+        # One overnight gap must not make four minute-spaced bars look daily.
+        bars.append(ti.Candle(bars[-1].ts + 14 * 3600, 1.0, 1.0, 1.0, 1.0))
+        self.assertEqual(ti.median_gap(bars), 60)
+        self.assertTrue(ti.is_intraday_spacing(bars))
+
+    def test_median_gap_needs_two_bars(self):
+        self.assertIsNone(ti.median_gap([]))
+        self.assertIsNone(ti.median_gap(self.minute_bars(1)))
+
+    def test_daily_bars_are_not_intraday(self):
+        self.assertFalse(ti.is_intraday_spacing(self.daily_bars()))
+
+    def test_minute_bars_are_intraday(self):
+        self.assertTrue(ti.is_intraday_spacing(self.minute_bars()))
+
+    def test_hourly_bars_are_intraday(self):
+        bars = [ti.Candle(1757037600 + i * 3600, 1.0, 1.0, 1.0, 1.0) for i in range(5)]
+        self.assertTrue(ti.is_intraday_spacing(bars))
+
+    def test_a_lone_bar_is_judged_by_whether_it_sits_on_a_day_boundary(self):
+        self.assertFalse(ti.is_intraday_spacing([ti.Candle(1757030400, 1.0, 1.0, 1.0, 1.0)]))
+        self.assertTrue(ti.is_intraday_spacing([ti.Candle(1757030400 + 600, 1.0, 1.0, 1.0, 1.0)]))
+
+    def test_no_bars_is_not_intraday(self):
+        self.assertFalse(ti.is_intraday_spacing([]))
+
+    def test_a_daily_only_feed_raises_instead_of_mislabelling(self):
+        """The reported bug: a daily series must never come back as intraday."""
+        bars = self.daily_bars()
+        payload = udf([b.ts for b in bars], [70_000_000] * len(bars))
+        opener = opener_for({"tgju.org": payload})
+
+        with self.assertRaises(TgjuError) as caught:
+            ti.fetch_candles(GOLD, bars[0].ts, bars[-1].ts + 86400, opener=opener)
+        message = str(caught.exception)
+        self.assertIn("فقط داده روزانه", message)
+        self.assertIn("داده روزانه", message)
+
+    def test_an_intraday_resolution_later_in_the_list_still_wins(self):
+        """A feed where only one spelling is honoured must still be found."""
+        def opener(request, timeout=None):
+            url = request.full_url
+            start = int(url.split("from=")[1].split("&")[0])
+            # Only "10m" yields minute bars; everything else answers daily.
+            if "resolution=10m&" in url:
+                times = [start + 600 * i for i in range(1, 6)]
+            else:
+                times = [start + 86400 * i for i in range(5)]
+            return FakeResponse(json.dumps(udf(times, [70_000_000] * 5)).encode())
+
+        base = 1757030400
+        candles, _, resolution = ti.fetch_candles(
+            GOLD, base, base + 5 * 86400, opener=opener
+        )
+        self.assertEqual(resolution, "10m")
+        self.assertTrue(ti.is_intraday_spacing(candles))
+
+    def test_the_resolution_list_covers_several_spellings(self):
+        """The bug happened because only bare minute counts were tried."""
+        self.assertIn("1", ti.NATIVE_RESOLUTIONS)
+        self.assertIn("10m", ti.NATIVE_RESOLUTIONS)
+        self.assertIn("60min", ti.NATIVE_RESOLUTIONS)
+        self.assertEqual(ti.NATIVE_RESOLUTIONS[0], "1", "finest first")
+
+
 class TestProbe(unittest.TestCase):
     def test_probe_stops_at_the_first_success_and_reports_it(self):
         report = ti.probe(GOLD, opener=in_window_opener("platform.tgju.org"))
         self.assertTrue(report[-1]["ok"])
         self.assertEqual(report[-1]["endpoint"], "platform-tvdata")
         self.assertIn("url", report[-1])
+
+    def test_probe_reports_daily_data_as_not_working(self):
+        """Daily bars are a failure for an intraday probe, and say why."""
+        def opener(request, timeout=None):
+            # Midnight-UTC boundaries *inside* the probed window, which is
+            # exactly the shape the real endpoint returned.
+            url = request.full_url
+            start = int(url.split("from=")[1].split("&")[0])
+            stop = int(url.split("to=")[1].split("&")[0])
+            first = -(-start // 86400) * 86400  # round up to a day boundary
+            times = list(range(first, stop + 1, 86400))
+            return FakeResponse(
+                json.dumps(udf(times, [70_000_000] * len(times))).encode()
+            )
+
+        report = ti.probe(GOLD, opener=opener)
+        self.assertTrue(all(not row["ok"] for row in report))
+        daily_rows = [r for r in report if r.get("candles")]
+        self.assertTrue(daily_rows)
+        self.assertEqual(daily_rows[0]["spacing_seconds"], 86400)
+        self.assertFalse(daily_rows[0]["intraday"])
+        self.assertIn("روزانه", daily_rows[0]["error"])
+
+    def test_probe_reports_the_spacing_it_measured(self):
+        report = ti.probe(GOLD, opener=in_window_opener("platform.tgju.org"))
+        working = report[-1]
+        self.assertTrue(working["ok"])
+        self.assertTrue(working["intraday"])
 
     def test_probe_reports_failures_instead_of_raising(self):
         opener = opener_for({})

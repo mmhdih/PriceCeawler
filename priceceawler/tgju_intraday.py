@@ -46,14 +46,32 @@ __all__ = [
     "parse_rows",
     "probe",
     "endpoints_from_setting",
+    "resolutions_from_setting",
     "MAX_SPAN_SECONDS",
+    "median_gap",
+    "is_intraday_spacing",
     "NATIVE_RESOLUTIONS",
 ]
 
-# TradingView resolution codes, finest first. We ask for the finest one that
-# answers and aggregate locally, so a server that only serves 5-minute bars
-# still yields correct 10-minute and hourly rows.
-NATIVE_RESOLUTIONS = ("1", "5", "10", "15", "30", "60")
+# Resolution codes to try, finest first. Standard TradingView UDF uses bare
+# minute counts, but this endpoint is undocumented and observably ignores
+# values it does not recognise (returning daily bars instead of an error), so
+# several spellings are tried and the *returned* spacing decides which one
+# actually gave intraday data - see `is_intraday_spacing`.
+NATIVE_RESOLUTIONS = (
+    "1", "5", "10", "15", "30", "60",
+    "1m", "5m", "10m", "15m", "30m", "60m",
+    "1min", "5min", "60min", "1H",
+)
+
+# A day of seconds. Bars spaced this far apart are daily bars, whatever
+# resolution was asked for, and cannot answer an intraday question.
+DAY_SECONDS = 86400
+
+# Spacing must be at least this much finer than a day to count as intraday.
+# Half a day is deliberately loose: a feed with long market gaps can still be
+# genuinely intraday, and the aggregation layer copes with sparse buckets.
+MAX_INTRADAY_SPACING = DAY_SECONDS // 2
 
 # Chart backends routinely cap how much history one request may span. Ask in
 # windows and stitch, rather than sending one huge range and getting nothing.
@@ -129,6 +147,19 @@ CANDIDATES: tuple[Endpoint, ...] = (
         parser="rows",
     ),
 )
+
+
+def resolutions_from_setting(pinned: str) -> tuple[str, ...]:
+    """Try a previously working resolution code first, then the rest.
+
+    It stays a *preference*, not a lock: the code is still validated by the
+    granularity check, so a feed that changes behaviour falls through to the
+    other spellings instead of silently serving daily bars again.
+    """
+    pinned = (pinned or "").strip()
+    if not pinned or pinned not in NATIVE_RESOLUTIONS:
+        return NATIVE_RESOLUTIONS
+    return (pinned,) + tuple(r for r in NATIVE_RESOLUTIONS if r != pinned)
 
 
 def endpoints_from_setting(pinned: str) -> tuple[Endpoint, ...]:
@@ -342,6 +373,46 @@ def _windows(from_ts: int, to_ts: int, span: int) -> Iterable[tuple[int, int]]:
         guard += 1
 
 
+def median_gap(candles: Sequence[Candle]) -> int | None:
+    """Median seconds between consecutive bars, or None with fewer than two.
+
+    The median, not the mean: an overnight or weekend gap would drag a mean
+    up past a day and make genuinely intraday data look daily.
+    """
+    if len(candles) < 2:
+        return None
+    gaps = sorted(
+        int(later.ts) - int(earlier.ts)
+        for earlier, later in zip(candles, candles[1:])
+        if int(later.ts) > int(earlier.ts)
+    )
+    if not gaps:
+        return None
+    middle = len(gaps) // 2
+    if len(gaps) % 2:
+        return gaps[middle]
+    return (gaps[middle - 1] + gaps[middle]) // 2
+
+
+def is_intraday_spacing(candles: Sequence[Candle]) -> bool:
+    """Whether these bars are actually finer than daily.
+
+    This endpoint accepts an unrecognised resolution and answers with daily
+    bars rather than an error, so "I got rows" is not evidence of intraday
+    data. Without this check a daily series would be relabelled as
+    10-minute rows - a wrong answer, which is worse than no answer.
+
+    A single bar carries no spacing, so it is judged by its timestamp: a
+    daily bar sits exactly on a day boundary (00:00 UTC for this feed).
+    """
+    gap = median_gap(candles)
+    if gap is not None:
+        return gap <= MAX_INTRADAY_SPACING
+    if len(candles) == 1:
+        return int(candles[0].ts) % DAY_SECONDS != 0
+    return False
+
+
 def _fetch_one(endpoint: Endpoint, symbol: Symbol, resolution: str,
                from_ts: int, to_ts: int, *, timeout: float, opener=None) -> list[Candle]:
     parser = _PARSERS.get(endpoint.parser, parse_udf)
@@ -375,6 +446,7 @@ def fetch_candles(
         raise TgjuError("بازه درخواستی نامعتبر است (پایان قبل از شروع).")
 
     attempts: list[str] = []
+    saw_daily = False
     for endpoint in (endpoints or CANDIDATES):
         for resolution in resolutions:
             try:
@@ -385,10 +457,29 @@ def fetch_candles(
             except (TgjuError, urllib.error.URLError, OSError, ValueError) as exc:
                 attempts.append(f"{endpoint.name}/{resolution}: {type(exc).__name__}")
                 continue
-            if candles:
-                return candles, endpoint, resolution
-            attempts.append(f"{endpoint.name}/{resolution}: بدون داده")
+            if not candles:
+                attempts.append(f"{endpoint.name}/{resolution}: بدون داده")
+                continue
+            # Rows are not enough: this endpoint answers an unrecognised
+            # resolution with DAILY bars instead of erroring, and relabelling
+            # those as 10-minute rows would be a wrong answer.
+            if not is_intraday_spacing(candles):
+                saw_daily = True
+                gap = median_gap(candles)
+                attempts.append(
+                    f"{endpoint.name}/{resolution}: داده روزانه"
+                    + (f" (فاصله {gap // 3600} ساعت)" if gap else "")
+                )
+                continue
+            return candles, endpoint, resolution
 
+    if saw_daily:
+        raise TgjuError(
+            "سرویس نمودار TGJU برای این نماد فقط داده روزانه برگرداند و هیچ‌کدام از"
+            " دقت‌های درون‌روزی را نپذیرفت؛ پس گزارش ۱۰ دقیقه/۱ ساعت از این منبع"
+            " ساخته نمی‌شود. آدرس درست سرویس درون‌روزی را از DevTools بردارید و در"
+            " تنظیمات وارد کنید. تلاش‌ها: " + "؛ ".join(attempts[:6])
+        )
     raise TgjuError(
         "سرویس نمودار درون‌روزی TGJU پاسخ قابل استفاده‌ای نداد. "
         "تلاش‌ها: " + "؛ ".join(attempts[:8])
@@ -413,18 +504,29 @@ def probe(symbol: Symbol, *, hours: int = 48, timeout: float = 15.0,
                 "endpoint": endpoint.name,
                 "resolution": resolution,
                 "url": _build_url(endpoint, symbol, resolution, from_ts, to_ts),
+                # Default to "not working": every later branch either proves
+                # intraday data or leaves this false, so a row is never
+                # missing the verdict callers read.
+                "ok": False,
             }
             try:
                 candles = _fetch_one(
                     endpoint, symbol, resolution, from_ts, to_ts,
                     timeout=timeout, opener=opener,
                 )
-                row["ok"] = bool(candles)
                 row["candles"] = len(candles)
                 if candles:
+                    gap = median_gap(candles)
+                    row["spacing_seconds"] = gap
+                    row["intraday"] = is_intraday_spacing(candles)
                     row["first"] = candles[0].ts
                     row["last"] = candles[-1].ts
                     row["sample_close"] = candles[-1].close
+                    # Only genuinely sub-daily data counts as working; daily
+                    # bars are reported so the output shows what went wrong.
+                    row["ok"] = row["intraday"]
+                    if not row["intraday"]:
+                        row["error"] = "داده روزانه، نه درون‌روزی"
             except Exception as exc:  # a probe must report, never raise
                 row["ok"] = False
                 row["error"] = f"{type(exc).__name__}: {exc}"

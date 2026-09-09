@@ -143,6 +143,9 @@ final class GC_Crawler {
         $endpoints = GC_TGJU_Intraday::endpoints_from_setting(
             isset($settings['intraday_endpoint']) ? $settings['intraday_endpoint'] : ''
         );
+        $natives = GC_TGJU_Intraday::resolutions_from_setting(
+            isset($settings['intraday_native']) ? $settings['intraday_native'] : ''
+        );
         list($from_ts, $to_ts) = GC_Intraday::range_bounds($start, $end);
 
         foreach (self::resolve($keys) as $symbol) {
@@ -153,13 +156,17 @@ final class GC_Crawler {
             // recorded samples only cover time the sampler was running for.
             if ($source === 'auto' || $source === 'tgju') {
                 try {
-                    $fetched = GC_TGJU_Intraday::fetch_candles($symbol, $from_ts, $to_ts, $endpoints);
+                    $fetched = GC_TGJU_Intraday::fetch_candles(
+                        $symbol, $from_ts, $to_ts, $endpoints, $natives
+                    );
                     $rows = GC_Intraday::aggregate_candles(
                         $fetched['candles'], $resolution, $symbol['decimals']
                     );
                     if ($rows) {
                         // Remember what worked so later requests skip probing.
-                        self::pin_intraday_endpoint($fetched['endpoint'], $settings);
+                        self::pin_intraday_endpoint(
+                            $fetched['endpoint'], $fetched['resolution'], $settings
+                        );
                     }
                 } catch (GC_TGJU_Intraday_Error $exc) {
                     $fetch_error = $exc->getMessage();
@@ -198,13 +205,22 @@ final class GC_Crawler {
     }
 
     /** Persist the chart endpoint that answered, so we stop probing. */
-    private static function pin_intraday_endpoint($name, $settings) {
+    private static function pin_intraday_endpoint($name, $native, $settings) {
         $current = isset($settings['intraday_endpoint']) ? $settings['intraday_endpoint'] : '';
+        $current_native = isset($settings['intraday_native']) ? $settings['intraday_native'] : '';
+        $changes = array();
         // A user-supplied URL template is theirs to keep; never churn it.
-        if ($name === 'custom' || $current === $name || strpos($current, '{symbol}') !== false) {
+        $keep_url = ($name === 'custom' || strpos($current, '{symbol}') !== false);
+        if (!$keep_url && $current !== $name) {
+            $changes['intraday_endpoint'] = $name;
+        }
+        if ($native !== '' && $current_native !== $native) {
+            $changes['intraday_native'] = $native;
+        }
+        if (!$changes) {
             return;
         }
-        GC_Storage::update_settings(array('intraday_endpoint' => $name));
+        GC_Storage::update_settings($changes);
     }
 
     /** Report which TGJU chart endpoint this host can actually reach. */
@@ -226,7 +242,11 @@ final class GC_Crawler {
             }
         }
         if ($working) {
-            self::pin_intraday_endpoint($working['endpoint'], $settings);
+            self::pin_intraday_endpoint(
+                $working['endpoint'],
+                isset($working['resolution']) ? $working['resolution'] : '',
+                $settings
+            );
         }
         return array('symbol' => $symbol['key'], 'working' => $working, 'attempts' => $report);
     }

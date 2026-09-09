@@ -16,6 +16,9 @@ final class GC_Admin {
     const NONCE_ACTION_SYMBOLS = 'goldcrawler_save_symbols';
     const NONCE_ACTION_INTRADAY = 'goldcrawler_save_intraday';
 
+    /** Probe results for this request, rendered under the form. */
+    private static $probe_report = array();
+
     public static function register() {
         add_action('admin_menu', array(__CLASS__, 'add_menu'));
     }
@@ -276,6 +279,11 @@ final class GC_Admin {
         }
 
         $result = GC_Crawler::probe_intraday(null);
+        // Keep the whole attempt list: the *spacing* per resolution is the
+        // diagnostic, since this endpoint answers an unrecognised resolution
+        // with daily bars rather than an error.
+        self::$probe_report = $result['attempts'];
+
         if (!empty($result['working'])) {
             return array(
                 'type' => 'success',
@@ -283,13 +291,72 @@ final class GC_Admin {
                     . ' (resolution=' . $result['working']['resolution'] . ') — ذخیره شد.',
             );
         }
-        $first = !empty($result['attempts']) ? $result['attempts'][0] : array();
-        $why = isset($first['error']) ? $first['error'] : 'بدون داده';
+
+        $daily_only = false;
+        foreach ($result['attempts'] as $row) {
+            if (!empty($row['candles']) && empty($row['intraday'])) {
+                $daily_only = true;
+                break;
+            }
+        }
+        if ($daily_only) {
+            return array(
+                'type' => 'error',
+                'text' => 'سرویس پاسخ می‌دهد، اما برای این نماد فقط داده «روزانه»'
+                    . ' برمی‌گرداند و هیچ‌کدام از کدهای دقت درون‌روزی را نپذیرفت'
+                    . ' (فاصله کندل‌ها در جدول زیر: ۸۶۴۰۰ ثانیه = یک روز). یعنی آدرس'
+                    . ' نمودار درون‌روزی چیز دیگری است؛ آن را از DevTools بردارید و'
+                    . ' در فیلد «آدرس سرویس نمودار» بگذارید.',
+            );
+        }
         return array(
             'type' => 'error',
-            'text' => 'هیچ‌کدام از آدرس‌های شناخته‌شده پاسخ نداد (' . $why
-                . '). آدرس درست را از DevTools بردارید و در فیلد زیر بگذارید.',
+            'text' => 'هیچ‌کدام از آدرس‌های شناخته‌شده پاسخ نداد. جدول زیر می‌گوید هر'
+                . ' آدرس چه جوابی داد؛ آدرس درست را از DevTools بردارید و در فیلد'
+                . ' «آدرس سرویس نمودار» بگذارید.',
         );
+    }
+
+    /** Renders what each probed endpoint/resolution actually returned. */
+    private static function render_probe_report() {
+        if (!self::$probe_report) {
+            return;
+        }
+        echo '<h3>نتیجه بررسی سرویس</h3>';
+        echo '<table class="widefat striped"><thead><tr>'
+            . '<th>آدرس</th><th>دقت درخواستی</th><th>تعداد کندل</th>'
+            . '<th>فاصله کندل‌ها</th><th>نتیجه</th></tr></thead><tbody>';
+        foreach (self::$probe_report as $row) {
+            $gap = isset($row['spacing_seconds']) ? $row['spacing_seconds'] : null;
+            if ($gap === null) {
+                $spacing = '—';
+            } elseif ($gap % 86400 === 0) {
+                $spacing = intdiv($gap, 86400) . ' روز (' . $gap . ' ثانیه)';
+            } elseif ($gap % 60 === 0) {
+                $spacing = intdiv($gap, 60) . ' دقیقه (' . $gap . ' ثانیه)';
+            } else {
+                $spacing = $gap . ' ثانیه';
+            }
+            if (!empty($row['ok'])) {
+                $verdict = '✔ درون‌روزی';
+            } elseif (isset($row['error'])) {
+                $verdict = '✖ ' . $row['error'];
+            } else {
+                $verdict = '✖ بدون داده';
+            }
+            echo '<tr>'
+                . '<td><code>' . esc_html($row['endpoint']) . '</code></td>'
+                . '<td><code>' . esc_html($row['resolution']) . '</code></td>'
+                . '<td>' . esc_html(isset($row['candles']) ? (string) $row['candles'] : '—') . '</td>'
+                . '<td>' . esc_html($spacing) . '</td>'
+                . '<td>' . esc_html($verdict) . '</td>'
+                . '</tr>';
+        }
+        echo '</tbody></table>';
+        echo '<p class="description">اگر همه ردیف‌ها «روزانه» هستند، این آدرس داده'
+            . ' درون‌روزی ندارد. در مرورگر: F12 ← تب <b>Network</b> ← فیلتر'
+            . ' <b>Fetch/XHR</b> ← روی نمودار بازه «۱ روز» را انتخاب کنید ← نشانی'
+            . ' درخواست تازه را بردارید.</p>';
     }
 
     private static function render_intraday_section($notice) {
@@ -348,6 +415,8 @@ final class GC_Admin {
             . '<button type="submit" name="goldcrawler_probe_intraday" class="button">بررسی سرویس</button>'
             . '</p>';
         echo '</form>';
+
+        self::render_probe_report();
     }
 
     private static function render_symbols_section($notice) {

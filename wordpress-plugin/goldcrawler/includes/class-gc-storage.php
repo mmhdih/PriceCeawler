@@ -43,6 +43,10 @@ final class GC_Storage {
         // Pinned chart endpoint: a candidate name, or a full URL template
         // with {symbol}/{resolution}/{from}/{to}. Empty = probe candidates.
         'intraday_endpoint' => '',
+        // The chart resolution code that actually returned sub-daily bars.
+        // Pinned after a success so later requests do not re-try every
+        // spelling; the granularity check still validates what comes back.
+        'intraday_native' => '',
         'resolution' => 'daily',
         'last_sample' => 0,
     );

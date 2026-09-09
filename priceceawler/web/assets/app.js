@@ -650,16 +650,27 @@ async function probeIntraday() {
       body: { symbols: [...state.selected] },
     });
     const working = payload.working;
+    // "Nothing answered" and "answered, but only with daily bars" are very
+    // different problems, and only the second means the URL itself is wrong.
+    const dailyOnly = (payload.attempts || []).some((a) => a.candles && !a.intraday);
     if (box) {
       box.hidden = false;
-      box.textContent = working
-        ? `سرویس درون‌روزی کار می‌کند (${working.endpoint} / ${working.resolution}).`
-        : 'هیچ‌کدام از آدرس‌های شناخته‌شده پاسخ نداد. از تنظیمات، آدرس سرویس نمودار را دستی وارد کنید.';
+      if (working) {
+        box.textContent = `سرویس درون‌روزی کار می‌کند (${working.endpoint} / ${working.resolution}).`;
+      } else if (dailyOnly) {
+        box.textContent = 'سرویس پاسخ می‌دهد اما فقط داده روزانه دارد، نه درون‌روزی. آدرس نمودار درون‌روزی را از DevTools بردارید و در تنظیمات وارد کنید.';
+      } else {
+        box.textContent = 'هیچ‌کدام از آدرس‌های شناخته‌شده پاسخ نداد. از تنظیمات، آدرس سرویس نمودار را دستی وارد کنید.';
+      }
     }
     toast(
-      working ? 'سرویس درون‌روزی TGJU در دسترس است.' : 'سرویس درون‌روزی TGJU پاسخ نداد.',
+      working
+        ? 'سرویس درون‌روزی TGJU در دسترس است.'
+        : dailyOnly
+          ? 'سرویس TGJU فقط داده روزانه دارد؛ گزارش درون‌روزی از این آدرس ساخته نمی‌شود.'
+          : 'سرویس درون‌روزی TGJU پاسخ نداد.',
       working ? 'ok' : 'warn',
-      working ? 4000 : 9000,
+      working ? 4000 : 10000,
     );
   } catch (error) {
     toast(error.message, 'error', 9000);

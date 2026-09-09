@@ -139,10 +139,18 @@ def run_probe_intraday(symbols: list[str] | None) -> int:
     print(f"  نماد آزمایشی: {result['symbol']}\n")
     for row in result["attempts"]:
         mark = "✔" if row.get("ok") else "✖"
-        detail = (
-            f"{row.get('candles')} کندل، آخرین قیمت {row.get('sample_close')}"
-            if row.get("ok") else row.get("error", "بدون داده")
-        )
+        detail = row.get("error", "بدون داده")
+        if row.get("candles"):
+            # The spacing is the diagnostic that matters: this endpoint answers
+            # an unrecognised resolution with daily bars, so only the measured
+            # gap tells you whether a code really produced intraday data.
+            gap = row.get("spacing_seconds")
+            spacing = f"فاصله {gap} ثانیه" if gap else "یک کندل"
+            detail = f"{row['candles']} کندل، {spacing}"
+            if not row.get("intraday"):
+                detail += " → روزانه، نه درون‌روزی"
+            elif row.get("sample_close") is not None:
+                detail += f"، آخرین قیمت {row['sample_close']}"
         print(f"  {mark} {row['endpoint']} / resolution={row['resolution']} — {detail}")
         print(f"      {row['url']}")
 
@@ -151,6 +159,22 @@ def run_probe_intraday(symbols: list[str] | None) -> int:
         print(f"\n✔ سرویس درون‌روزی کار می‌کند: {working['endpoint']} "
               f"(resolution={working['resolution']}) و در تنظیمات ذخیره شد.\n", flush=True)
         return 0
+    daily_only = any(
+        row.get("candles") and not row.get("intraday") for row in result["attempts"]
+    )
+    if daily_only:
+        print(
+            "\n✖ سرویس پاسخ می‌دهد، اما برای این نماد فقط داده *روزانه* برمی‌گرداند\n"
+            "  و هیچ‌کدام از کدهای دقت درون‌روزی را نپذیرفت (به فاصله کندل‌ها در\n"
+            "  بالا نگاه کنید: ۸۶۴۰۰ ثانیه = یک روز).\n"
+            "  یعنی آدرس نمودار درون‌روزی چیز دیگری است. آن را از DevTools مرورگر\n"
+            "  بردارید: F12 ← تب Network ← فیلتر Fetch/XHR ← روی نمودار، بازه\n"
+            "  «۱ روز» یا «۱ هفته» را انتخاب کنید ← روی درخواست تازه راست‌کلیک ←\n"
+            "  Copy as cURL. سپس در تنظیمات، فیلد «آدرس سرویس نمودار» را با آن\n"
+            "  پر کنید — با {symbol}، {resolution}، {from} و {to} به‌جای مقادیر.\n",
+            flush=True,
+        )
+        return 1
     print(
         "\n✖ هیچ‌کدام از آدرس‌های شناخته‌شده پاسخ نداد.\n"
         "  آدرس درست را از DevTools مرورگر (تب Network، فیلتر Fetch/XHR، هنگام\n"

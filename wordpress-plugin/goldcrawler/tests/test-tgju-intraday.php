@@ -232,6 +232,156 @@ foreach ($requested as $url) {
 }
 gc_check($only_pinned && $requested, 'a pinned endpoint is the only one contacted');
 
+// -- granularity: daily bars must never pass as intraday --------------------
+// Regression cover for a real failure: asking for resolution=1 over a week
+// returned one bar per day stamped 00:00 UTC (03:30 Tehran), and the plugin
+// relabelled them as 10-minute rows. Rows are not evidence of granularity.
+
+function gc_bars($start, $count, $step) {
+    $bars = array();
+    for ($i = 0; $i < $count; $i++) {
+        $bars[] = array('ts' => $start + ($i * $step), 'open' => 1.0,
+            'high' => 1.0, 'low' => 1.0, 'close' => 1.0);
+    }
+    return $bars;
+}
+
+$gc_midnight = 1757030400; // exactly a midnight UTC, like the real response
+
+gc_check(GC_TGJU_Intraday::median_gap(array()) === null, 'the median gap of no bars is null');
+gc_check(GC_TGJU_Intraday::median_gap(gc_bars($gc_midnight, 1, 60)) === null,
+    'the median gap needs at least two bars');
+gc_check(GC_TGJU_Intraday::median_gap(gc_bars($gc_midnight, 5, 60)) === 60,
+    'the median gap of minute bars is 60 seconds');
+gc_check(GC_TGJU_Intraday::median_gap(gc_bars($gc_midnight, 5, 86400)) === 86400,
+    'the median gap of daily bars is a day');
+
+// One long market gap must not make minute bars look daily.
+$gc_gappy = gc_bars($gc_midnight + 3600, 5, 60);
+$gc_gappy[] = array('ts' => $gc_gappy[4]['ts'] + (14 * 3600), 'open' => 1.0,
+    'high' => 1.0, 'low' => 1.0, 'close' => 1.0);
+gc_check(GC_TGJU_Intraday::median_gap($gc_gappy) === 60,
+    'the median ignores a single overnight gap');
+gc_check(GC_TGJU_Intraday::is_intraday_spacing($gc_gappy) === true,
+    'minute bars with one overnight gap are still intraday');
+
+gc_check(GC_TGJU_Intraday::is_intraday_spacing(gc_bars($gc_midnight, 5, 86400)) === false,
+    'daily bars are not intraday');
+gc_check(GC_TGJU_Intraday::is_intraday_spacing(gc_bars($gc_midnight + 3600, 5, 60)) === true,
+    'minute bars are intraday');
+gc_check(GC_TGJU_Intraday::is_intraday_spacing(gc_bars($gc_midnight + 3600, 5, 3600)) === true,
+    'hourly bars are intraday');
+gc_check(GC_TGJU_Intraday::is_intraday_spacing(array()) === false,
+    'no bars at all is not intraday');
+// A lone bar is judged by whether it sits on a day boundary.
+gc_check(GC_TGJU_Intraday::is_intraday_spacing(gc_bars($gc_midnight, 1, 60)) === false,
+    'a lone bar exactly on a day boundary is a daily bar');
+gc_check(GC_TGJU_Intraday::is_intraday_spacing(gc_bars($gc_midnight + 600, 1, 60)) === true,
+    'a lone bar away from a day boundary counts as intraday');
+
+// The whole bug, end to end: a daily-only feed must raise, not mislabel.
+gc_reset_remote();
+gc_test_stub_remote_get('tgju.org', function ($url) {
+    $start = (int) explode('&', explode('from=', $url)[1])[0];
+    $stop = (int) explode('&', explode('to=', $url)[1])[0];
+    $first = (int) (ceil($start / 86400) * 86400);
+    $times = array();
+    for ($ts = $first; $ts <= $stop; $ts += 86400) {
+        $times[] = $ts;
+    }
+    return gc_udf(array('s' => 'ok', 't' => $times,
+        'c' => array_fill(0, max(1, count($times)), 70000000)));
+});
+$threw = false;
+$message = '';
+try {
+    GC_TGJU_Intraday::fetch_candles($gold, $gc_midnight, $gc_midnight + (6 * 86400));
+} catch (GC_TGJU_Intraday_Error $exc) {
+    $threw = true;
+    $message = $exc->getMessage();
+}
+gc_check($threw, 'a daily-only feed raises instead of returning daily bars');
+gc_check(strpos($message, 'فقط داده روزانه') !== false,
+    'the error says the feed only returned daily data');
+
+// A feed where only one spelling is honoured must still be found.
+gc_reset_remote();
+gc_test_stub_remote_get('tgju.org', function ($url) {
+    $start = (int) explode('&', explode('from=', $url)[1])[0];
+    if (strpos($url, 'resolution=10m&') !== false) {
+        $times = array();
+        for ($i = 1; $i <= 5; $i++) { $times[] = $start + ($i * 600); }
+    } else {
+        $times = array();
+        for ($i = 0; $i < 5; $i++) { $times[] = $start + ($i * 86400); }
+    }
+    return gc_udf(array('s' => 'ok', 't' => $times, 'c' => array_fill(0, 5, 70000000)));
+});
+$found = GC_TGJU_Intraday::fetch_candles($gold, $gc_midnight, $gc_midnight + (6 * 86400));
+gc_check($found['resolution'] === '10m',
+    'the intraday resolution later in the list is still found');
+gc_check(GC_TGJU_Intraday::is_intraday_spacing($found['candles']) === true,
+    'the candles it returned really are intraday');
+
+gc_check(in_array('10m', GC_TGJU_Intraday::NATIVE_RESOLUTIONS, true),
+    'the resolution list covers minute-suffixed spellings too');
+gc_check(GC_TGJU_Intraday::NATIVE_RESOLUTIONS[0] === '1', 'finest resolution first');
+
+// A pinned resolution is tried first, so a known-good feed costs one request.
+$gc_pref = GC_TGJU_Intraday::resolutions_from_setting('10m');
+gc_check($gc_pref[0] === '10m', 'a pinned resolution is tried first');
+gc_check(count($gc_pref) === count(GC_TGJU_Intraday::NATIVE_RESOLUTIONS),
+    'pinning reorders rather than narrowing, so a changed feed still recovers');
+gc_check(!in_array('10m', array_slice($gc_pref, 1), true),
+    'the pinned resolution is not duplicated later in the list');
+gc_check(GC_TGJU_Intraday::resolutions_from_setting('') === GC_TGJU_Intraday::NATIVE_RESOLUTIONS,
+    'no pin means the default order');
+gc_check(GC_TGJU_Intraday::resolutions_from_setting('nonsense') === GC_TGJU_Intraday::NATIVE_RESOLUTIONS,
+    'an unknown pin is ignored');
+
+gc_reset_remote();
+$gc_asked = array();
+gc_test_stub_remote_get('tgju.org', function ($url) use (&$gc_asked) {
+    $gc_asked[] = $url;
+    $start = (int) explode('&', explode('from=', $url)[1])[0];
+    $times = array();
+    for ($i = 1; $i <= 5; $i++) { $times[] = $start + ($i * 600); }
+    return gc_udf(array('s' => 'ok', 't' => $times, 'c' => array_fill(0, 5, 70000000)));
+});
+GC_TGJU_Intraday::fetch_candles(
+    $gold, $gc_midnight, $gc_midnight + 3600, null,
+    GC_TGJU_Intraday::resolutions_from_setting('10m')
+);
+gc_check(count($gc_asked) === 1, 'a pinned resolution that works costs a single request');
+gc_check(strpos($gc_asked[0], 'resolution=10m') !== false,
+    'that single request used the pinned resolution');
+
+// The probe must call daily data a failure, and say why.
+gc_reset_remote();
+gc_test_stub_remote_get('tgju.org', function ($url) {
+    $start = (int) explode('&', explode('from=', $url)[1])[0];
+    $stop = (int) explode('&', explode('to=', $url)[1])[0];
+    $first = (int) (ceil($start / 86400) * 86400);
+    $times = array();
+    for ($ts = $first; $ts <= $stop; $ts += 86400) { $times[] = $ts; }
+    return gc_udf(array('s' => 'ok', 't' => $times,
+        'c' => array_fill(0, max(1, count($times)), 70000000)));
+});
+$gc_report = GC_TGJU_Intraday::probe($gold);
+$gc_any_ok = false;
+$gc_daily_row = null;
+foreach ($gc_report as $row) {
+    if (!empty($row['ok'])) { $gc_any_ok = true; }
+    if ($gc_daily_row === null && !empty($row['candles'])) { $gc_daily_row = $row; }
+}
+gc_check($gc_any_ok === false, 'the probe does not call a daily feed working');
+gc_check($gc_daily_row !== null, 'the probe recorded the daily rows it saw');
+gc_check($gc_daily_row['intraday'] === false, 'the probe marks those rows as not intraday');
+gc_check($gc_daily_row['spacing_seconds'] === 86400, 'the probe reports the measured spacing');
+gc_check(strpos($gc_daily_row['error'], 'روزانه') !== false, 'the probe says why it failed');
+
+gc_reset_remote();
+
 // -- aggregate_candles: bars keep their own extremes ------------------------
 
 // 1404/05/28 == 2025-08-19; 06:00 UTC == 09:30 Tehran.

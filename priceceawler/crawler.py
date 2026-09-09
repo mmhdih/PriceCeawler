@@ -214,6 +214,9 @@ class Crawler:
         endpoints = tgju_intraday.endpoints_from_setting(
             str(self.settings.get("intraday_endpoint") or "")
         )
+        natives = tgju_intraday.resolutions_from_setting(
+            str(self.settings.get("intraday_native") or "")
+        )
         from_ts, to_ts = intraday.range_bounds(start, end)
 
         series: list[Series] = []
@@ -229,12 +232,13 @@ class Crawler:
             if source in ("auto", "tgju"):
                 try:
                     candles, endpoint, native = tgju_intraday.fetch_candles(
-                        symbol, from_ts, to_ts, endpoints=endpoints
+                        symbol, from_ts, to_ts,
+                        endpoints=endpoints, resolutions=natives,
                     )
                     rows = intraday.aggregate_candles(candles, resolution, symbol.decimals)
                     if rows:
                         # Remember what worked so later requests skip probing.
-                        self._pin_endpoint(endpoint.name)
+                        self._pin_endpoint(endpoint.name, native)
                 except TgjuError as exc:
                     fetch_error = str(exc)
 
@@ -258,12 +262,18 @@ class Crawler:
             series.append(Series(symbol, rows, intraday.stats(rows, symbol)))
         return CrawlResult(series, errors, [], resolution)
 
-    def _pin_endpoint(self, name: str) -> None:
-        """Persist the chart endpoint that answered, so we stop probing."""
-        if name == "custom" or self.settings.get("intraday_endpoint") == name:
-            return  # a user-supplied URL is theirs to keep; no churn either
+    def _pin_endpoint(self, name: str, native: str = "") -> None:
+        """Persist the endpoint and resolution that answered, to stop probing."""
+        changes: dict[str, str] = {}
+        # A user-supplied URL is theirs to keep; never churn it.
+        if name != "custom" and self.settings.get("intraday_endpoint") != name:
+            changes["intraday_endpoint"] = name
+        if native and self.settings.get("intraday_native") != native:
+            changes["intraday_native"] = native
+        if not changes:
+            return
         try:
-            self.settings.update({"intraday_endpoint": name})
+            self.settings.update(changes)
         except OSError:  # pragma: no cover - a read-only data dir must not fail a report
             pass
 
@@ -274,7 +284,7 @@ class Crawler:
         report = tgju_intraday.probe(symbol)
         working = next((row for row in report if row.get("ok")), None)
         if working:
-            self._pin_endpoint(working["endpoint"])
+            self._pin_endpoint(working["endpoint"], working.get("resolution", ""))
         return {"symbol": symbol.key, "working": working, "attempts": report}
 
     def sample_intraday(self, keys: Sequence[str] | None = None) -> dict:

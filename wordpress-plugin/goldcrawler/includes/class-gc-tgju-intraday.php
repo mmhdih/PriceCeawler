@@ -33,11 +33,28 @@ if (!defined('ABSPATH') && !defined('GC_STANDALONE_TEST')) {
 final class GC_TGJU_Intraday {
 
     /**
-     * TradingView resolution codes, finest first. We take the finest that
-     * answers and aggregate locally, so a backend serving only 5-minute bars
-     * still yields correct 10-minute and hourly rows.
+     * Resolution codes to try, finest first. Standard TradingView UDF uses
+     * bare minute counts, but this endpoint is undocumented and observably
+     * ignores values it does not recognise (answering with DAILY bars rather
+     * than an error), so several spellings are tried and the *returned*
+     * spacing decides which one actually gave intraday data.
      */
-    const NATIVE_RESOLUTIONS = array('1', '5', '10', '15', '30', '60');
+    const NATIVE_RESOLUTIONS = array(
+        '1', '5', '10', '15', '30', '60',
+        '1m', '5m', '10m', '15m', '30m', '60m',
+        '1min', '5min', '60min', '1H',
+    );
+
+    /** Bars spaced a day apart are daily bars, whatever was asked for. */
+    const DAY_SECONDS = 86400;
+
+    /**
+     * Spacing must be at least this much finer than a day to count as
+     * intraday. Half a day is deliberately loose: a feed with long market
+     * gaps can still be genuinely intraday, and the aggregation layer copes
+     * with sparse buckets.
+     */
+    const MAX_INTRADAY_SPACING = 43200;
 
     /** Chart backends cap how much history one request may span. */
     const MAX_SPAN_SECONDS = 604800; // 7 days
@@ -94,6 +111,25 @@ final class GC_TGJU_Intraday {
      * escape hatch for when none of our candidates is right, so a wrong guess
      * never needs a code change.
      */
+    /**
+     * Try a previously working resolution code first, then the rest.
+     *
+     * It stays a *preference*, not a lock: the code is still validated by the
+     * granularity check, so a feed that changes behaviour falls through to
+     * the other spellings instead of silently serving daily bars again.
+     */
+    public static function resolutions_from_setting($pinned) {
+        $pinned = is_string($pinned) ? trim($pinned) : '';
+        if ($pinned === '' || !in_array($pinned, self::NATIVE_RESOLUTIONS, true)) {
+            return self::NATIVE_RESOLUTIONS;
+        }
+        $rest = array_values(array_filter(
+            self::NATIVE_RESOLUTIONS,
+            function ($r) use ($pinned) { return $r !== $pinned; }
+        ));
+        return array_merge(array($pinned), $rest);
+    }
+
     public static function endpoints_from_setting($pinned) {
         $pinned = is_string($pinned) ? trim($pinned) : '';
         if ($pinned === '') {
@@ -367,6 +403,58 @@ final class GC_TGJU_Intraday {
         return $decoded;
     }
 
+    /**
+     * Median seconds between consecutive bars, or null with fewer than two.
+     *
+     * The median, not the mean: an overnight or weekend gap would drag a
+     * mean up past a day and make genuinely intraday data look daily.
+     *
+     * @param array[] $candles sorted by ts
+     */
+    public static function median_gap($candles) {
+        if (count($candles) < 2) {
+            return null;
+        }
+        $gaps = array();
+        for ($i = 1; $i < count($candles); $i++) {
+            $gap = (int) $candles[$i]['ts'] - (int) $candles[$i - 1]['ts'];
+            if ($gap > 0) {
+                $gaps[] = $gap;
+            }
+        }
+        if (!$gaps) {
+            return null;
+        }
+        sort($gaps);
+        $middle = intdiv(count($gaps), 2);
+        if (count($gaps) % 2) {
+            return $gaps[$middle];
+        }
+        return intdiv($gaps[$middle - 1] + $gaps[$middle], 2);
+    }
+
+    /**
+     * Whether these bars are actually finer than daily.
+     *
+     * This endpoint accepts an unrecognised resolution and answers with
+     * daily bars rather than an error, so "I got rows" is not evidence of
+     * intraday data. Without this check a daily series would be relabelled
+     * as 10-minute rows - a wrong answer, which is worse than no answer.
+     *
+     * A single bar carries no spacing, so it is judged by its timestamp: a
+     * daily bar sits exactly on a day boundary (00:00 UTC for this feed).
+     */
+    public static function is_intraday_spacing($candles) {
+        $gap = self::median_gap($candles);
+        if ($gap !== null) {
+            return $gap <= self::MAX_INTRADAY_SPACING;
+        }
+        if (count($candles) === 1) {
+            return ((int) $candles[0]['ts'] % self::DAY_SECONDS) !== 0;
+        }
+        return false;
+    }
+
     private static function fetch_one($endpoint, $symbol, $resolution, $from, $to) {
         $candles = array();
         foreach (self::windows($from, $to, self::MAX_SPAN_SECONDS) as $window) {
@@ -388,32 +476,53 @@ final class GC_TGJU_Intraday {
      * @return array{candles: array[], endpoint: string, resolution: string}
      * @throws GC_TGJU_Intraday_Error naming every attempt when nothing works
      */
-    public static function fetch_candles($symbol, $from, $to, $endpoints = null) {
+    public static function fetch_candles($symbol, $from, $to, $endpoints = null, $resolutions = null) {
         if ($to < $from) {
             throw new GC_TGJU_Intraday_Error('بازه درخواستی نامعتبر است (پایان قبل از شروع).');
         }
         $endpoints = $endpoints ? $endpoints : self::candidates();
+        $resolutions = $resolutions ? $resolutions : self::NATIVE_RESOLUTIONS;
         $attempts = array();
+        $saw_daily = false;
 
         foreach ($endpoints as $endpoint) {
-            foreach (self::NATIVE_RESOLUTIONS as $resolution) {
+            foreach ($resolutions as $resolution) {
                 try {
                     $candles = self::fetch_one($endpoint, $symbol, $resolution, $from, $to);
                 } catch (GC_TGJU_Intraday_Error $exc) {
                     $attempts[] = $endpoint['name'] . "/{$resolution}: " . $exc->getMessage();
                     continue;
                 }
-                if ($candles) {
-                    return array(
-                        'candles' => $candles,
-                        'endpoint' => $endpoint['name'],
-                        'resolution' => $resolution,
-                    );
+                if (!$candles) {
+                    $attempts[] = $endpoint['name'] . "/{$resolution}: بدون داده";
+                    continue;
                 }
-                $attempts[] = $endpoint['name'] . "/{$resolution}: بدون داده";
+                // Rows are not enough: this endpoint answers an unrecognised
+                // resolution with DAILY bars instead of erroring, and
+                // relabelling those as 10-minute rows would be a wrong answer.
+                if (!self::is_intraday_spacing($candles)) {
+                    $saw_daily = true;
+                    $gap = self::median_gap($candles);
+                    $attempts[] = $endpoint['name'] . "/{$resolution}: داده روزانه"
+                        . ($gap ? ' (فاصله ' . intdiv($gap, 3600) . ' ساعت)' : '');
+                    continue;
+                }
+                return array(
+                    'candles' => $candles,
+                    'endpoint' => $endpoint['name'],
+                    'resolution' => $resolution,
+                );
             }
         }
 
+        if ($saw_daily) {
+            throw new GC_TGJU_Intraday_Error(
+                'سرویس نمودار TGJU برای این نماد فقط داده روزانه برگرداند و هیچ‌کدام از'
+                . ' دقت‌های درون‌روزی را نپذیرفت؛ پس گزارش ۱۰ دقیقه/۱ ساعت از این منبع'
+                . ' ساخته نمی‌شود. آدرس درست سرویس درون‌روزی را از DevTools بردارید و در'
+                . ' تنظیمات وارد کنید. تلاش‌ها: ' . implode('؛ ', array_slice($attempts, 0, 6))
+            );
+        }
         throw new GC_TGJU_Intraday_Error(
             'سرویس نمودار درون‌روزی TGJU پاسخ قابل استفاده‌ای نداد. تلاش‌ها: '
             . implode('؛ ', array_slice($attempts, 0, 6))
@@ -440,11 +549,18 @@ final class GC_TGJU_Intraday {
                 );
                 try {
                     $candles = self::fetch_one($endpoint, $symbol, $resolution, $from, $to);
-                    $row['ok'] = !empty($candles);
                     $row['candles'] = count($candles);
                     if ($candles) {
+                        $row['spacing_seconds'] = self::median_gap($candles);
+                        $row['intraday'] = self::is_intraday_spacing($candles);
                         $last = $candles[count($candles) - 1];
                         $row['sample_close'] = $last['close'];
+                        // Only genuinely sub-daily data counts as working;
+                        // daily bars are reported so the output shows why.
+                        $row['ok'] = $row['intraday'];
+                        if (!$row['intraday']) {
+                            $row['error'] = 'داده روزانه، نه درون‌روزی';
+                        }
                     }
                 } catch (Exception $exc) { // a probe must report, never throw
                     $row['error'] = $exc->getMessage();
