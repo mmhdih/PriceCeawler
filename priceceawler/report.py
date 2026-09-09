@@ -13,9 +13,19 @@ from .symbols import Symbol
 from .tgju import PricePoint
 from .version import APP_NAME, __version__
 
-__all__ = ["Series", "build_series", "to_xlsx", "to_csv", "to_json", "COLUMNS"]
+__all__ = [
+    "Series", "build_series", "to_xlsx", "to_csv", "to_json",
+    "COLUMNS", "COLUMNS_INTRADAY", "columns_for", "rows_are_intraday",
+]
 
 COLUMNS = ("تاریخ شمسی", "روز هفته", "کمترین", "بیشترین", "پایانی", "میانگین معاملاتی", "وضعیت")
+
+# Intraday rows carry a clock time (and a per-bucket opening price), so they
+# get two extra columns; a daily export keeps exactly the columns it always had.
+COLUMNS_INTRADAY = (
+    "تاریخ شمسی", "ساعت", "روز هفته", "باز", "کمترین", "بیشترین", "پایانی",
+    "میانگین معاملاتی", "تعداد نمونه",
+)
 
 _LIVE = "معامله شده"
 _CARRIED = "بدون معامله (قیمت روز قبل)"
@@ -139,7 +149,21 @@ def build_series(
     return Series(symbol, rows, stats)
 
 
+def rows_are_intraday(rows: Sequence[dict[str, Any]]) -> bool:
+    """Intraday rows always carry a clock time; daily rows never do."""
+    return bool(rows) and "time" in rows[0]
+
+
+def columns_for(rows: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    return COLUMNS_INTRADAY if rows_are_intraday(rows) else COLUMNS
+
+
 def _row_values(row: dict[str, Any]) -> list[Any]:
+    if "time" in row:
+        return [
+            row["date"], row["time"], row["weekday"], row["open"], row["low"],
+            row["high"], row["close"], row["average"], row["samples"],
+        ]
     return [
         row["date"], row["weekday"], row["low"], row["high"],
         row["close"], row["average"], row["status"],
@@ -190,8 +214,10 @@ def to_xlsx(series_list: Iterable[Series], start: JalaliDate, end: JalaliDate) -
     summary["A2"] = f"بازه: {start} تا {end}   |   نسخه {__version__}"
     summary["A2"].font = muted_font
 
+    # In an intraday workbook that count is time buckets, not days.
+    any_intraday = any(rows_are_intraday(series.rows) for series in series_list)
     summary_header = (
-        "نماد", "شناسه TGJU", "واحد", "روزهای معاملاتی",
+        "نماد", "شناسه TGJU", "واحد", "ردیف‌های زمانی" if any_intraday else "روزهای معاملاتی",
         "اولین قیمت", "آخرین قیمت", "کمترین", "بیشترین", "میانگین", "تغییر", "درصد تغییر",
     )
     for column, title in enumerate(summary_header, start=1):
@@ -220,25 +246,29 @@ def to_xlsx(series_list: Iterable[Series], start: JalaliDate, end: JalaliDate) -
     for series in series_list:
         sheet = workbook.create_sheet(_sheet_name(series.symbol.name, used_names))
         sheet.sheet_view.rightToLeft = True
-        for column, title in enumerate(COLUMNS, start=1):
+        intraday_rows = rows_are_intraday(series.rows)
+        columns = columns_for(series.rows)
+        for column, title in enumerate(columns, start=1):
             cell = sheet.cell(row=1, column=column, value=title)
             cell.fill, cell.font, cell.alignment, cell.border = header_fill, header_font, center, border
 
         number_format = "#,##0" if series.symbol.decimals == 0 else "#,##0." + "0" * series.symbol.decimals
+        # Price columns: 4-8 with the extra time/open columns, else 3-6.
+        price_columns = range(4, 9) if intraday_rows else range(3, 7)
         for index, row in enumerate(series.rows, start=2):
             for column, value in enumerate(_row_values(row), start=1):
                 cell = sheet.cell(row=index, column=column, value=value)
                 cell.alignment, cell.border = center, border
                 cell.font = body_font if row["live"] else muted_font
-                if 3 <= column <= 6:
+                if column in price_columns:
                     cell.number_format = number_format
 
-        widths = (14, 12, 16, 16, 16, 20, 26)
+        widths = (14, 10, 12, 16, 16, 16, 16, 20, 12) if intraday_rows else (14, 12, 16, 16, 16, 20, 26)
         for column, width in enumerate(widths, start=1):
             sheet.column_dimensions[get_column_letter(column)].width = width
         sheet.freeze_panes = "A2"
         if len(series.rows) > 1:
-            sheet.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{len(series.rows) + 1}"
+            sheet.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{len(series.rows) + 1}"
 
     buffer = io.BytesIO()
     workbook.save(buffer)
@@ -247,9 +277,11 @@ def to_xlsx(series_list: Iterable[Series], start: JalaliDate, end: JalaliDate) -
 
 def to_csv(series_list: Iterable[Series]) -> bytes:
     """One flat CSV for every symbol, BOM-prefixed so Excel reads UTF-8."""
+    series_list = list(series_list)
+    first_rows = series_list[0].rows if series_list else []
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer)
-    writer.writerow(("نماد", *COLUMNS))
+    writer.writerow(("نماد", *columns_for(first_rows)))
     for series in series_list:
         for row in series.rows:
             writer.writerow((series.symbol.name, *_row_values(row)))

@@ -181,6 +181,76 @@ class ServerTestCase(unittest.TestCase):
         # leave shared server state as found for the tests that run after this one
         self.call("/api/settings", {"disabled_symbols": []})
 
+    # -- intraday --------------------------------------------------------
+    def test_meta_advertises_the_resolutions_and_retention(self):
+        status, payload, _ = self.call("/api/meta")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [r["id"] for r in payload["resolutions"]], ["daily", "10m", "1h", "tick"]
+        )
+        self.assertEqual(payload["intradayRetentionDays"], 30)
+        self.assertIsInstance(payload["intraday"], list)
+
+    def test_sample_records_the_live_price(self):
+        # A key only this test samples: record() ignores a repeat within the
+        # same second, so sharing a key with another test would race it.
+        status, payload, _ = self.call("/api/sample", {"symbols": ["sekee"]})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["errors"], [])
+        self.assertEqual(payload["recorded"], ["sekee"])
+        self.assertTrue(any(row["key"] == "sekee" for row in payload["intraday"]))
+
+    def test_an_intraday_series_is_built_from_the_recorded_sample(self):
+        self.call("/api/sample", {"symbols": ["geram18"]})
+        today = JalaliDate.today()
+        status, payload, _ = self.call(
+            "/api/series",
+            {"symbols": ["geram18"], "start": str(today), "end": str(today), "resolution": "10m"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["resolution"], "10m")
+        rows = payload["series"][0]["rows"]
+        self.assertTrue(rows)
+        # Intraday rows carry a clock time and a sample count; daily ones do not.
+        self.assertIn("time", rows[0])
+        self.assertGreaterEqual(rows[0]["samples"], 1)
+
+    def test_an_intraday_range_with_no_samples_reports_it_per_symbol(self):
+        status, payload, _ = self.call(
+            "/api/series",
+            {"symbols": ["geram18"], "start": "1400/01/01", "end": "1400/01/02", "resolution": "1h"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["series"], [])
+        self.assertEqual(payload["errors"][0]["symbol"], "geram18")
+
+    def test_an_unknown_resolution_falls_back_to_daily(self):
+        today = JalaliDate.today()
+        status, payload, _ = self.call(
+            "/api/series",
+            {"symbols": ["geram18"], "start": str(today), "end": str(today), "resolution": "7m"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["resolution"], "daily")
+        self.assertNotIn("time", payload["series"][0]["rows"][0])
+
+    def test_an_intraday_export_names_the_resolution_in_the_filename(self):
+        self.call("/api/sample", {"symbols": ["geram18"]})
+        today = JalaliDate.today()
+        status, body, headers = self.call(
+            "/api/export",
+            {
+                "symbols": ["geram18"], "start": str(today), "end": str(today),
+                "format": "csv", "resolution": "10m",
+            },
+            raw=True,
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("-10m", headers["Content-Disposition"])
+        text = body.decode("utf-8-sig")
+        self.assertIn("ساعت", text.splitlines()[0])
+
     def test_directory_traversal_is_blocked(self):
         status, _, _ = self.call("/assets/../../priceceawler/server.py")
         self.assertEqual(status, 404)

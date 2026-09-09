@@ -5,7 +5,17 @@ import unittest
 from openpyxl import load_workbook
 
 from priceceawler.jalali import JalaliDate
-from priceceawler.report import build_series, to_csv, to_json, to_xlsx
+from priceceawler.report import (
+    COLUMNS,
+    COLUMNS_INTRADAY,
+    Series,
+    build_series,
+    columns_for,
+    rows_are_intraday,
+    to_csv,
+    to_json,
+    to_xlsx,
+)
 from priceceawler.symbols import CATALOG
 from priceceawler.tgju import PricePoint
 
@@ -99,6 +109,76 @@ class TestExporters(unittest.TestCase):
         self.assertEqual(payload["range"], {"start": "1404/05/28", "end": "1404/06/01"})
         self.assertEqual(len(payload["series"]), 2)
         self.assertEqual(payload["series"][1]["symbol"]["unit"], "دلار")
+
+
+def intraday_row(date, time, close, samples=3):
+    """A row shaped the way intraday.aggregate() produces them."""
+    return {
+        "ts": 0, "date": date, "time": time, "weekday": "سه‌شنبه",
+        "open": close - 500, "low": close - 800, "high": close + 400,
+        "close": close, "average": close - 100, "samples": samples,
+        "status": "معامله شده", "live": True,
+    }
+
+
+class TestIntradayExports(unittest.TestCase):
+    """Intraday rows get their own columns; daily exports keep theirs."""
+
+    def setUp(self):
+        self.start = self.end = JalaliDate(1404, 5, 28)
+        self.rows = [
+            intraday_row("1404/05/28", "09:00", 7_000_000),
+            intraday_row("1404/05/28", "09:10", 7_050_000, samples=8),
+        ]
+        self.series = [Series(GOLD, self.rows, {"days": 2, "trading_days": 2, "unit": "تومان",
+                                                "first": 7_000_000, "last": 7_050_000,
+                                                "min": 7_000_000, "max": 7_050_000,
+                                                "mean": 7_025_000, "change": 50_000,
+                                                "change_pct": 0.71})]
+
+    def test_rows_are_detected_by_their_clock_time(self):
+        self.assertTrue(rows_are_intraday(self.rows))
+        self.assertFalse(rows_are_intraday([]))
+        daily = build_series(GOLD, [point("1404/05/28", 700_000)], self.start, self.end)
+        self.assertFalse(rows_are_intraday(daily.rows))
+        self.assertEqual(columns_for(self.rows), COLUMNS_INTRADAY)
+        self.assertEqual(columns_for(daily.rows), COLUMNS)
+
+    def test_csv_uses_the_intraday_header_and_carries_the_time(self):
+        text = to_csv(self.series).decode("utf-8-sig")
+        header, first = text.splitlines()[0], text.splitlines()[1]
+        self.assertEqual(header.split(","), ["نماد", *COLUMNS_INTRADAY])
+        self.assertIn("09:00", first)
+        self.assertIn("7000000", first)
+
+    def test_xlsx_writes_the_nine_intraday_columns(self):
+        workbook = load_workbook(io.BytesIO(to_xlsx(self.series, self.start, self.end)))
+        sheet = workbook["طلای ۱۸ عیار"]
+        self.assertEqual(
+            [sheet.cell(row=1, column=c).value for c in range(1, 10)],
+            list(COLUMNS_INTRADAY),
+        )
+        self.assertEqual(sheet["B2"].value, "09:00")
+        self.assertEqual(sheet["G2"].value, 7_000_000)   # پایانی
+        self.assertEqual(sheet["I3"].value, 8)           # تعداد نمونه
+        self.assertEqual(sheet.max_row, 3)               # header + 2 buckets
+        # The summary's count column is buckets here, and must say so.
+        self.assertEqual(workbook["خلاصه گزارش"]["D4"].value, "ردیف‌های زمانی")
+
+    def test_a_daily_export_is_unchanged_by_the_intraday_branch(self):
+        daily = [build_series(GOLD, [point("1404/05/28", 700_000)], self.start, self.end)]
+        workbook = load_workbook(io.BytesIO(to_xlsx(daily, self.start, self.end)))
+        sheet = workbook["طلای ۱۸ عیار"]
+        self.assertEqual(
+            [sheet.cell(row=1, column=c).value for c in range(1, 8)], list(COLUMNS)
+        )
+        self.assertEqual(workbook["خلاصه گزارش"]["D4"].value, "روزهای معاملاتی")
+
+    def test_json_keeps_every_intraday_field(self):
+        payload = json.loads(to_json(self.series, self.start, self.end))
+        row = payload["series"][0]["rows"][0]
+        for key in ("date", "time", "open", "low", "high", "close", "average", "samples"):
+            self.assertIn(key, row)
 
 
 if __name__ == "__main__":

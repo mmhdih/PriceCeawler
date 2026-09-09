@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Sequence
 
+from . import intraday
 from .jalali import JalaliDate
 from .report import Series, build_series
 from .storage import Archive, Settings, data_dir, read_json, write_json
@@ -27,12 +28,16 @@ class CrawlResult:
     series: list[Series]
     errors: list[dict[str, str]]
     from_cache: list[str]
+    # Echoed back so a client knows which resolution the rows actually are -
+    # an unrecognised request silently falls back to daily.
+    resolution: str = "daily"
 
     def to_dict(self) -> dict:
         return {
             "series": [s.to_dict() for s in self.series],
             "errors": self.errors,
             "fromCache": self.from_cache,
+            "resolution": self.resolution,
         }
 
 
@@ -181,6 +186,85 @@ class Crawler:
             self.archive.merge(symbol.key, [p.to_dict() for p in points[-400:]])
 
         return CrawlResult(series, errors, from_cache)
+
+    # -- intraday --------------------------------------------------------
+    def build_at(
+        self,
+        keys: Sequence[str],
+        start: JalaliDate,
+        end: JalaliDate,
+        *,
+        fill_gaps: bool = True,
+        force: bool = False,
+        resolution: str = "daily",
+    ) -> CrawlResult:
+        """Build series at the requested resolution.
+
+        Daily goes to TGJU (which only serves daily rows); the intraday
+        resolutions are served from our own recorded samples, since no amount
+        of asking the daily endpoint can recover the last ten minutes.
+        """
+        resolution = intraday.normalise_resolution(resolution)
+        if not intraday.is_intraday(resolution):
+            daily = self.build(keys, start, end, fill_gaps=fill_gaps, force=force)
+            daily.resolution = resolution
+            return daily
+
+        series: list[Series] = []
+        errors: list[dict[str, str]] = []
+        for symbol in self.resolve(keys):
+            rows = intraday.build_rows(symbol, start, end, resolution)
+            if not rows:
+                errors.append(
+                    {
+                        "symbol": symbol.key,
+                        "name": symbol.name,
+                        "message": f"برای «{symbol.name}» در این بازه هیچ نمونه درون‌روزی ثبت نشده است.",
+                    }
+                )
+                continue
+            series.append(Series(symbol, rows, intraday.stats(rows, symbol)))
+        return CrawlResult(series, errors, [], resolution)
+
+    def sample_intraday(self, keys: Sequence[str] | None = None) -> dict:
+        """Record one intraday sample per watched symbol.
+
+        A failed fetch records nothing: ``points_for`` deliberately falls back
+        to cached data when the network is down ("stale data beats no data"),
+        which is right for a report but wrong here - storing a stale price
+        under a fresh timestamp would invent an observation that never
+        happened.
+        """
+        keys = list(keys or self.settings.get("symbols") or [])
+        recorded: list[str] = []
+        errors: list[dict[str, str]] = []
+
+        for symbol in self.resolve(keys):
+            try:
+                points, from_cache = self.points_for(symbol, force=True)
+            except TgjuError as exc:
+                errors.append({"symbol": symbol.key, "name": symbol.name, "message": str(exc)})
+                continue
+            if from_cache:
+                errors.append(
+                    {
+                        "symbol": symbol.key,
+                        "name": symbol.name,
+                        "message": "قیمت تازه از TGJU دریافت نشد؛ برای جلوگیری از ثبت داده نادرست، نمونه‌ای ذخیره نشد.",
+                    }
+                )
+                continue
+            if points and intraday.record(symbol.key, points[-1].close):
+                recorded.append(symbol.key)
+
+        pruned = intraday.prune()
+        self.settings.update({"last_sample": int(time.time())})
+        return {
+            "recorded": recorded,
+            "errors": errors,
+            "pruned": pruned,
+            "intraday": intraday.summary(),
+        }
 
     def daily_crawl(self, keys: Sequence[str] | None = None) -> dict:
         """Refresh the archive for the watched symbols; used by ``--crawl``."""

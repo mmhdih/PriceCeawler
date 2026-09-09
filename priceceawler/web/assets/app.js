@@ -18,6 +18,8 @@ const state = {
   query: '',
   presets: [],
   preset: '30',
+  resolutions: [],
+  resolution: 'daily',
   result: null,
   range: null,
   activeTab: 0,
@@ -88,7 +90,7 @@ function busy(on, text = 'در حال دریافت داده‌ها…') {
   state.busy = on;
   $('overlayText').textContent = text;
   $('overlay').hidden = !on;
-  ['fetchBtn', 'refreshBtn', 'crawlBtn'].forEach((id) => {
+  ['fetchBtn', 'refreshBtn', 'crawlBtn', 'sampleBtn'].forEach((id) => {
     const button = $(id);
     if (button) button.disabled = on;
   });
@@ -232,7 +234,10 @@ function renderStats() {
       ['کمترین', faNumber(stats.min, symbol.decimals)],
       ['بیشترین', faNumber(stats.max, symbol.decimals)],
       ['میانگین', faNumber(stats.mean, symbol.decimals)],
-      ['روز معاملاتی', faDigits(stats.trading_days)],
+      // Intraday rows are time buckets, not days - counting them as
+      // "trading days" would misreport a single morning as one whole day.
+      [isIntradayRows(series.rows) ? 'ردیف زمانی' : 'روز معاملاتی',
+       faDigits(stats.trading_days)],
     ].forEach(([label, value]) => {
       const cell = el('div');
       cell.append(el('b', 'num', value), document.createTextNode(label));
@@ -245,10 +250,14 @@ function renderStats() {
 }
 
 /* ── نمودار ────────────────────────────────────────────── */
+// An intraday row is identified by date *and* clock time, otherwise every
+// bucket of a day would collapse onto a single point on the axis.
+const rowKey = (row) => (row.time !== undefined ? `${row.date} ${row.time}` : row.date);
+
 function chartData() {
-  const dates = [...new Set(state.result.series.flatMap((s) => s.rows.map((r) => r.date)))].sort();
+  const dates = [...new Set(state.result.series.flatMap((s) => s.rows.map(rowKey)))].sort();
   const lines = state.result.series.map((series, index) => {
-    const byDate = new Map(series.rows.map((row) => [row.date, row.close]));
+    const byDate = new Map(series.rows.map((row) => [rowKey(row), row.close]));
     return {
       name: series.symbol.name,
       decimals: series.symbol.decimals,
@@ -351,7 +360,9 @@ function renderChart() {
       y: height - pad.bottom + 18,
       'text-anchor': 'middle',
     });
-    label.textContent = faDigits(dates[index].slice(5));
+    const key = dates[index];
+    // "1404/05/12 09:30" → the clock time; a daily key → month/day.
+    label.textContent = faDigits(key.includes(' ') ? key.split(' ')[1] : key.slice(5));
     axis.appendChild(label);
   }
   svg.append(grid, axis);
@@ -461,9 +472,10 @@ function renderChart() {
     legend.appendChild(item);
   });
 
+  const label = (state.resolutions || []).find((r) => r.id === state.resolution);
   $('chartSub').textContent = percent
-    ? 'درصد تغییر نسبت به اولین روز بازه — برای مقایسه نمادها با مقیاس‌های متفاوت'
-    : `قیمت پایانی روزانه (${plots[0].unit})`;
+    ? 'درصد تغییر نسبت به اولین نقطه بازه — برای مقایسه نمادها با مقیاس‌های متفاوت'
+    : `قیمت پایانی ${label ? label.label : 'روزانه'} (${plots[0].unit})`;
 }
 
 /* ── جدول ──────────────────────────────────────────────── */
@@ -484,11 +496,17 @@ function renderTableTabs() {
   });
 }
 
+/** Intraday rows always carry a clock time; daily rows never do. */
+const isIntradayRows = (rows) => !!(rows && rows.length && rows[0].time !== undefined);
+
 function renderTable() {
   const series = state.result.series[state.activeTab];
   if (!series) return;
   const decimals = series.symbol.decimals;
-  const headers = ['تاریخ شمسی', 'روز هفته', 'کمترین', 'بیشترین', 'پایانی', 'میانگین معاملاتی', 'وضعیت'];
+  const intraday = isIntradayRows(series.rows);
+  const headers = intraday
+    ? ['تاریخ شمسی', 'ساعت', 'باز', 'کمترین', 'بیشترین', 'پایانی', 'میانگین', 'تعداد نمونه']
+    : ['تاریخ شمسی', 'روز هفته', 'کمترین', 'بیشترین', 'پایانی', 'میانگین معاملاتی', 'وضعیت'];
 
   const thead = $('dataTable').tHead;
   thead.replaceChildren();
@@ -498,6 +516,18 @@ function renderTable() {
   const tbody = $('dataTable').tBodies[0];
   const fragment = document.createDocumentFragment();
   series.rows.forEach((row) => {
+    if (intraday) {
+      const tr = el('tr');
+      tr.appendChild(el('td', 'num', faDate(row.date)));
+      tr.appendChild(el('td', 'num', faDigits(row.time)));
+      [row.open, row.low, row.high, row.close, row.average].forEach((value) => {
+        tr.appendChild(el('td', 'num', faNumber(value, decimals)));
+      });
+      tr.appendChild(el('td', 'num', faDigits(row.samples)));
+      fragment.appendChild(tr);
+      return;
+    }
+
     const tr = el('tr', row.live ? '' : 'is-filled');
     tr.appendChild(el('td', 'num', faDate(row.date)));
     tr.appendChild(el('td', null, row.weekday));
@@ -513,12 +543,86 @@ function renderTable() {
   });
   tbody.replaceChildren(fragment);
 
-  $('tableSub').textContent =
-    `${series.symbol.name} — ${faDigits(series.stats.days)} روز، ` +
-    `${faDigits(series.stats.trading_days)} روز معاملاتی (واحد: ${series.stats.unit})`;
+  $('tableSub').textContent = intraday
+    ? `${series.symbol.name} — ${faDigits(series.stats.days)} ردیف زمانی (واحد: ${series.stats.unit})`
+    : `${series.symbol.name} — ${faDigits(series.stats.days)} روز، ` +
+      `${faDigits(series.stats.trading_days)} روز معاملاتی (واحد: ${series.stats.unit})`;
   $('tableFoot').textContent = state.range
     ? `بازه گزارش: ${faDate(state.range.start)} تا ${faDate(state.range.end)}`
     : '';
+}
+
+/* ── دقت زمانی (روزانه / درون‌روزی) ──────────────────────── */
+function renderResolutions() {
+  const box = $('resolutionChips');
+  if (!box) return;
+  box.replaceChildren();
+
+  (state.resolutions || []).forEach((res) => {
+    const chip = el('button', 'chip', res.label);
+    chip.type = 'button';
+    chip.classList.toggle('is-active', state.resolution === res.id);
+    chip.onclick = () => {
+      state.resolution = res.id;
+      renderResolutions();
+      persistSettings();
+    };
+    box.appendChild(chip);
+  });
+
+  const intraday = (state.resolutions || []).some((r) => r.id === state.resolution && r.intraday);
+  const hint = $('resolutionHint');
+  if (hint) {
+    hint.textContent = intraday
+      ? 'گزارش از نمونه‌های ثبت‌شده روی همین رایانه ساخته می‌شود — فقط برای بازه‌هایی که ثبت خودکار روشن بوده.'
+      : 'گزارش روزانه مستقیماً از تاریخچه TGJU خوانده می‌شود.';
+  }
+  const sw = $('intradaySwitch');
+  if (sw) sw.style.opacity = intraday ? '1' : '.65';
+}
+
+function renderIntraday(rows) {
+  const box = $('intradayList');
+  if (!box) return;
+  box.replaceChildren();
+  const names = new Map(state.symbols.map((symbol) => [symbol.key, symbol.name]));
+
+  if (!rows || !rows.length) {
+    box.appendChild(el('div', 'archive__empty', 'هنوز نمونه درون‌روزی ثبت نشده است. کلید بالا را روشن کنید یا «ثبت نمونه همین حالا» را بزنید.'));
+    return;
+  }
+
+  rows.forEach((row) => {
+    const item = el('div', 'archive__item');
+    item.append(
+      el('div', 'archive__name', names.get(row.key) || row.key),
+      el('div', 'archive__meta', `${faDigits(row.samples)} نمونه — ${faDigits(row.days)} روز`),
+    );
+    box.appendChild(item);
+  });
+}
+
+async function sampleNow() {
+  if (state.busy) return;
+  busy(true, 'در حال ثبت نمونه قیمت…');
+  try {
+    const payload = await api('api/sample', {
+      method: 'POST',
+      body: { symbols: [...state.selected] },
+    });
+    renderIntraday(payload.intraday);
+    (payload.errors || []).forEach((error) => toast(error.message, 'error', 8000));
+    const count = (payload.recorded || []).length;
+    if (count) {
+      toast(`قیمت ${faDigits(count)} نماد ثبت شد.`, 'ok', 3500);
+    } else if (!(payload.errors || []).length) {
+      toast('قیمت تازه‌ای برای ثبت نبود (همین ثانیه قبلاً ثبت شده).', 'info');
+    }
+  } catch (error) {
+    toast(error.message, 'error', 9000);
+  } finally {
+    busy(false);
+  }
 }
 
 /* ── آرشیو ─────────────────────────────────────────────── */
@@ -558,6 +662,8 @@ async function persistSettings() {
         end: dates.end,
         fill_gaps: $('fillGaps').checked,
         auto_crawl: $('autoCrawl').checked,
+        resolution: state.resolution,
+        intraday_recording: $('intradayRecording').checked,
         theme: document.documentElement.dataset.theme,
       },
     });
@@ -587,6 +693,7 @@ async function fetchSeries(force = false) {
         start: dates.start,
         end: dates.end,
         fillGaps: $('fillGaps').checked,
+        resolution: state.resolution,
         force,
       },
     });
@@ -642,6 +749,7 @@ async function exportAs(format) {
         start: dates.start,
         end: dates.end,
         fillGaps: $('fillGaps').checked,
+        resolution: state.resolution,
         format,
       },
     });
@@ -875,6 +983,7 @@ async function init() {
   state.meta = meta;
   state.symbols = meta.symbols;
   state.presets = meta.presets || [];
+  state.resolutions = meta.resolutions || [];
 
   const settings = meta.settings || {};
   applyTheme(settings.theme === 'dark' ? 'dark' : 'light');
@@ -882,6 +991,8 @@ async function init() {
   $('dataDir').textContent = `محل ذخیره داده‌ها: ${meta.dataDir}`;
   $('fillGaps').checked = settings.fill_gaps !== false;
   $('autoCrawl').checked = settings.auto_crawl !== false;
+  $('intradayRecording').checked = settings.intraday_recording === true;
+  state.resolution = settings.resolution || 'daily';
 
   (settings.symbols || []).forEach((key) => state.selected.add(key));
   state.preset = settings.range_preset || '30';
@@ -894,6 +1005,8 @@ async function init() {
   renderSymbolList();
   updateSymbolCount();
   renderPresets();
+  renderResolutions();
+  renderIntraday(meta.intraday);
   renderArchive(meta.archive);
 
   // رویدادها
@@ -904,9 +1017,11 @@ async function init() {
   $('fetchBtn').onclick = () => fetchSeries(false);
   $('refreshBtn').onclick = () => fetchSeries(true);
   $('crawlBtn').onclick = crawlNow;
+  $('sampleBtn').onclick = sampleNow;
   $('addSymbolBtn').onclick = addCustomSymbol;
   $('fillGaps').onchange = persistSettings;
   $('autoCrawl').onchange = persistSettings;
+  $('intradayRecording').onchange = persistSettings;
   ['startDate', 'endDate'].forEach((id) => {
     $(id).addEventListener('change', () => {
       state.preset = 'custom';

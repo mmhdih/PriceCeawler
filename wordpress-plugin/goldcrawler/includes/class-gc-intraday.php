@@ -137,7 +137,10 @@ final class GC_Intraday {
      * @return bool whether the sample was stored (false = same second already recorded)
      */
     public static function record($symbol_key, $price, $timestamp = null) {
-        if (!is_numeric($price) || (float) $price <= 0) {
+        // NAN/INF pass both is_numeric() and a `<= 0` test, but json_encode
+        // refuses them: the encode would return false, the day file would be
+        // overwritten with nothing, and every earlier sample would be lost.
+        if (!is_numeric($price) || !is_finite((float) $price) || (float) $price <= 0) {
             return false;
         }
         $timestamp = $timestamp === null ? time() : (int) $timestamp;
@@ -187,10 +190,14 @@ final class GC_Intraday {
             $pairs[] = array($ts, $price);
         }
         $payload = array('symbol' => $symbol_key, 'samples' => $pairs);
+        $encoded = wp_json_encode($payload, JSON_UNESCAPED_UNICODE);
+        if (!is_string($encoded) || $encoded === '') {
+            return; // keep the existing file rather than truncating it
+        }
         // Same atomic write pattern GC_Storage uses: a crash mid-write must
         // never leave a truncated JSON file behind.
         $tmp = $path . '.tmp-' . wp_generate_password(6, false);
-        file_put_contents($tmp, wp_json_encode($payload, JSON_UNESCAPED_UNICODE));
+        file_put_contents($tmp, $encoded);
         rename($tmp, $path);
     }
 

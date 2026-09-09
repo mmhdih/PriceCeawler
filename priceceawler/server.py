@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
+from . import intraday
 from .crawler import Crawler
 from .fonts import font_css
 from .jalali import JalaliDate
@@ -83,12 +84,38 @@ class AppServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
+    SAMPLE_INTERVAL_SECONDS = 600
+
     def __init__(self, address: tuple[str, int], handler, *, open_browser_token: str) -> None:
         super().__init__(address, handler)
         self.settings = Settings()
         self.crawler = Crawler(self.settings)
         self.token = open_browser_token
         self.should_stop = threading.Event()
+        self._sampler: threading.Thread | None = None
+
+    def start_intraday_sampler(self) -> bool:
+        """Sample the live price every 10 minutes while the app is open.
+
+        The desktop build has no cron, so recording has to run in-process.
+        The thread is a daemon and re-checks the setting on every tick, so
+        turning recording off in the UI stops it without a restart.
+        """
+        if self._sampler is not None:
+            return False
+
+        def loop() -> None:
+            while not self.should_stop.wait(self.SAMPLE_INTERVAL_SECONDS):
+                if not self.settings.get("intraday_recording"):
+                    continue
+                try:
+                    self.crawler.sample_intraday()
+                except Exception:  # pragma: no cover - background best effort
+                    pass  # a failed tick must never take the server down
+
+        self._sampler = threading.Thread(target=loop, name="intraday-sampler", daemon=True)
+        self._sampler.start()
+        return True
 
     @property
     def url(self) -> str:
@@ -209,6 +236,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/settings"): self._api_settings,
             ("POST", "/api/symbols"): self._api_add_symbol,
             ("POST", "/api/crawl"): self._api_crawl,
+            ("POST", "/api/sample"): self._api_sample,
             ("POST", "/api/shutdown"): self._api_shutdown,
         }
 
@@ -257,6 +285,9 @@ class Handler(BaseHTTPRequestHandler):
                 # Settings section needs this to let a disabled symbol be
                 # re-enabled again (it no longer appears in "symbols" above).
                 "catalog": [s.to_dict() for s in CATALOG.values()],
+                "resolutions": list(intraday.RESOLUTIONS),
+                "intraday": intraday.summary(),
+                "intradayRetentionDays": intraday.RETENTION_DAYS,
                 "settings": self.server.settings.as_dict(),
                 "archive": crawler.archive.summary(),
             }
@@ -269,10 +300,11 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._body()
         keys = _symbol_keys(payload)
         start, end = _parse_range(payload)
-        result = self.server.crawler.build(
+        result = self.server.crawler.build_at(
             keys, start, end,
             fill_gaps=bool(payload.get("fillGaps", True)),
             force=bool(payload.get("force", False)),
+            resolution=str(payload.get("resolution", "daily")),
         )
         if not result.series and result.errors:
             self._send_json({"ok": False, "error": result.errors[0]["message"], **result.to_dict()})
@@ -287,8 +319,11 @@ class Handler(BaseHTTPRequestHandler):
         if fmt not in {"xlsx", "csv", "json"}:
             raise ApiError("قالب خروجی پشتیبانی نمی‌شود.")
 
-        result = self.server.crawler.build(
-            keys, start, end, fill_gaps=bool(payload.get("fillGaps", True))
+        resolution = intraday.normalise_resolution(payload.get("resolution", "daily"))
+        result = self.server.crawler.build_at(
+            keys, start, end,
+            fill_gaps=bool(payload.get("fillGaps", True)),
+            resolution=resolution,
         )
         if not result.series:
             message = result.errors[0]["message"] if result.errors else "داده‌ای برای خروجی وجود ندارد."
@@ -304,7 +339,8 @@ class Handler(BaseHTTPRequestHandler):
             body = to_json(result.series, start, end)
             content_type = "application/json; charset=utf-8"
 
-        name = f"TGJU-{str(start).replace('/', '-')}_{str(end).replace('/', '-')}.{fmt}"
+        suffix = f"-{resolution}" if intraday.is_intraday(resolution) else ""
+        name = f"TGJU-{str(start).replace('/', '-')}_{str(end).replace('/', '-')}{suffix}.{fmt}"
         self._send(
             HTTPStatus.OK, body, content_type,
             {
@@ -343,6 +379,12 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._body()
         keys = payload.get("symbols") or self.server.settings.get("symbols")
         self._send_json({"ok": True, **self.server.crawler.daily_crawl(keys)})
+
+    def _api_sample(self) -> None:
+        """Records one intraday sample now ("ثبت نمونه همین حالا")."""
+        payload = self._body()
+        keys = payload.get("symbols") or self.server.settings.get("symbols")
+        self._send_json({"ok": True, **self.server.crawler.sample_intraday(keys)})
 
     def _api_shutdown(self) -> None:
         self._send_json({"ok": True})

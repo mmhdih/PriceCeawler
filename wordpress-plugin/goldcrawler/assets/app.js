@@ -245,7 +245,10 @@ function renderStats() {
       ['کمترین', faNumber(stats.min, symbol.decimals)],
       ['بیشترین', faNumber(stats.max, symbol.decimals)],
       ['میانگین', faNumber(stats.mean, symbol.decimals)],
-      ['روز معاملاتی', faDigits(stats.trading_days)],
+      // Intraday rows are time buckets, not days - counting them as
+      // "trading days" would misreport a single morning as one whole day.
+      [isIntradayRows(series.rows) ? 'ردیف زمانی' : 'روز معاملاتی',
+       faDigits(stats.trading_days)],
     ].forEach(([label, value]) => {
       const cell = el('div');
       cell.append(el('b', 'num', value), document.createTextNode(label));

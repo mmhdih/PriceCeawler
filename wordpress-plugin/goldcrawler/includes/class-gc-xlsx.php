@@ -301,7 +301,18 @@ final class GC_Xlsx {
         $xlsx = new self();
 
         // --- summary sheet ---------------------------------------------
-        $header = array('نماد', 'شناسه TGJU', 'واحد', 'روزهای معاملاتی', 'اولین قیمت', 'آخرین قیمت', 'کمترین', 'بیشترین', 'میانگین', 'تغییر', 'درصد تغییر');
+        // In an intraday workbook that count is time buckets, not days.
+        $any_intraday = false;
+        foreach ($series_list as $series) {
+            if (GC_Report::rows_are_intraday($series['rows'])) {
+                $any_intraday = true;
+                break;
+            }
+        }
+        $header = array(
+            'نماد', 'شناسه TGJU', 'واحد', $any_intraday ? 'ردیف‌های زمانی' : 'روزهای معاملاتی',
+            'اولین قیمت', 'آخرین قیمت', 'کمترین', 'بیشترین', 'میانگین', 'تغییر', 'درصد تغییر',
+        );
         $summary_rows = array();
         $summary_rows[] = array(array('v' => $app_name . ' — گزارش قیمت‌های TGJU', 'style' => 'title'));
         $summary_rows[] = array(array('v' => sprintf(

@@ -79,6 +79,9 @@ def run_gui(host: str, port: int, open_browser: bool) -> int:
     # کراول خودکار روزانه، بدون بلاک‌کردن باز شدن رابط کاربری
     threading.Thread(target=_auto_crawl, args=(server.crawler,), daemon=True).start()
 
+    # نمونه‌برداری درون‌روزی (هر ۱۰ دقیقه) تا وقتی برنامه باز است
+    server.start_intraday_sampler()
+
     if open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
 
@@ -108,6 +111,19 @@ def run_crawl(symbols: list[str] | None) -> int:
     result = crawler.daily_crawl(symbols)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if result["errors"] and not result["added"] else 0
+
+
+def run_sample(symbols: list[str] | None) -> int:
+    """Record one intraday sample - meant for Task Scheduler every 10 minutes.
+
+    Exits non-zero only when nothing at all was recorded, so a scheduled task
+    reports a genuine failure (network down, every symbol stale) rather than
+    flagging a partial pass.
+    """
+    crawler = Crawler()
+    result = crawler.sample_intraday(symbols)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 1 if result["errors"] and not result["recorded"] else 0
 
 
 def run_export(args: argparse.Namespace) -> int:
@@ -224,6 +240,12 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--output", help="مسیر فایل خروجی")
     export.add_argument("--no-fill", action="store_true", help="روزهای بدون معامله پر نشوند")
 
+    sample = subparsers.add_parser(
+        "sample",
+        help="ثبت یک نمونه قیمت درون‌روزی (برای Task Scheduler هر ۱۰ دقیقه)",
+    )
+    sample.add_argument("--symbols", nargs="*", help="فهرست شناسه نمادها")
+
     doctor = subparsers.add_parser("doctor", help="بررسی سلامت برنامه و اتصال به TGJU")
     doctor.add_argument("--offline", action="store_true", help="اتصال شبکه بررسی نشود")
     return parser
@@ -236,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_crawl(args.symbols)
     if args.command == "export":
         return run_export(args)
+    if args.command == "sample":
+        return run_sample(args.symbols)
     if args.command == "doctor":
         return run_doctor(args.offline)
     return run_gui(args.host, args.port, not args.no_browser)

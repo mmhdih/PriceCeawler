@@ -102,9 +102,13 @@ foreach (array('daily' => $daily['series'], 'intraday' => $intraday_series) as $
     if ($label === 'intraday') {
         gc_check(strpos($shared, 'ساعت') !== false, 'the intraday workbook has a time column header');
         gc_check(strpos($shared, '09:30') !== false, 'the intraday workbook contains the bucket time');
+        // The summary counts time buckets here, so it must not call them days.
+        gc_check(strpos($shared, 'ردیف‌های زمانی') !== false, 'the intraday summary counts time rows');
+        gc_check(strpos($shared, 'روزهای معاملاتی') === false, 'the intraday summary does not mislabel buckets as trading days');
     } else {
         gc_check(strpos($shared, 'ساعت') === false, 'the daily workbook has no time column');
         gc_check(strpos($shared, 'وضعیت') !== false, 'the daily workbook keeps its status column');
+        gc_check(strpos($shared, 'روزهای معاملاتی') !== false, 'the daily summary still counts trading days');
     }
 }
 

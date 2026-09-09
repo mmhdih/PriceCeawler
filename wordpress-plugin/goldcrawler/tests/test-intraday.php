@@ -114,6 +114,12 @@ gc_check(GC_Intraday::record('geram18', 7000000, $base) === true, 'a sample is r
 gc_check(GC_Intraday::record('geram18', 7001000, $base + 60) === true, 'a second sample at a different second is recorded');
 gc_check(GC_Intraday::record('geram18', 7002000, $base) === false, 'a sample for a second already recorded is rejected (a double-fired cron is harmless)');
 gc_check(GC_Intraday::record('geram18', 0, $base + 120) === false, 'a zero/invalid price is never recorded');
+// NAN/INF pass is_numeric() and a `<= 0` test, but json_encode refuses them:
+// the encode would return false and the day file would be truncated, losing
+// every earlier sample for that day.
+gc_check(GC_Intraday::record('geram18', NAN, $base + 130) === false, 'a NAN price is rejected before it can destroy the day file');
+gc_check(GC_Intraday::record('geram18', INF, $base + 140) === false, 'an INF price is rejected');
+gc_check(count(GC_Intraday::load_samples('geram18', $base - 10, $base + 3600)) === 2, 'the rejected non-finite prices left the earlier samples intact');
 
 $loaded = GC_Intraday::load_samples('geram18', $base - 10, $base + 3600);
 gc_check(count($loaded) === 2, 'both stored samples load back');

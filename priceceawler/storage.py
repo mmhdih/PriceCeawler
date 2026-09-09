@@ -118,6 +118,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_crawl": True,          # crawl once per day on startup
     "theme": "light",
     "last_crawl": "",            # Jalali date of the last successful crawl
+    # Intraday (10-minute / hourly / per-change) prices have to be sampled as
+    # time passes - the TGJU history endpoint only ever returns one row per
+    # day. Off by default: nothing samples in the background unless asked.
+    "intraday_recording": False,
+    "resolution": "daily",
+    "last_sample": 0,            # unix time of the last sampling pass
 }
 
 
