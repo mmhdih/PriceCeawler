@@ -29,6 +29,7 @@ from typing import Any, Mapping, Sequence
 from .jalali import JalaliDate, gregorian_to_jalali
 from .storage import data_dir, read_json, write_json
 from .symbols import Symbol
+from .tgju_intraday import Candle
 
 __all__ = [
     "TEHRAN",
@@ -37,11 +38,13 @@ __all__ = [
     "is_intraday",
     "normalise_resolution",
     "record",
+    "record_many",
     "load_samples",
     "prune",
     "summary",
     "aggregate",
     "aggregate_candles",
+    "samples_as_candles",
     "build_rows",
     "explain_empty",
     "symbol_summary",
@@ -189,6 +192,48 @@ def record(symbol_key: str, price: float | None, timestamp: float | None = None)
     path.parent.mkdir(parents=True, exist_ok=True)
     write_json(path, {"symbol": symbol_key, "samples": [[ts, p] for ts, p in ordered.items()]})
     return True
+
+
+def record_many(symbol_key: str, points: Mapping[int, float]) -> int:
+    """Store many observations at once. Returns how many were new.
+
+    The whole point is one read+write per day file instead of one per point:
+    harvesting a full day is ~144 points, and :func:`record` would re-read and
+    re-write the file for every one of them.
+    """
+    if not points:
+        return 0
+
+    # Group by Tehran day, since that is how the files are split.
+    by_day: dict[str, dict[int, float]] = {}
+    for raw_ts, raw_price in points.items():
+        try:
+            ts, price = int(raw_ts), float(raw_price)
+        except (TypeError, ValueError):
+            continue
+        # See record(): a non-finite price would serialise as an invalid JSON
+        # token and make every later read of this day fail.
+        if ts <= 0 or not math.isfinite(price) or price <= 0:
+            continue
+        by_day.setdefault(local_iso_date(ts), {})[ts] = price
+
+    added = 0
+    for iso, day_points in by_day.items():
+        path = _day_path(symbol_key, iso)
+        samples = _read_day(path)
+        for ts, price in day_points.items():
+            if ts not in samples:
+                added += 1
+            samples[ts] = price
+        ordered = dict(sorted(samples.items()))
+        if len(ordered) > MAX_SAMPLES_PER_DAY:
+            ordered = dict(list(ordered.items())[-MAX_SAMPLES_PER_DAY:])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_json(
+            path,
+            {"symbol": symbol_key, "samples": [[ts, p] for ts, p in ordered.items()]},
+        )
+    return added
 
 
 def load_samples(symbol_key: str, from_ts: float, to_ts: float) -> dict[int, float]:
@@ -389,6 +434,18 @@ def explain_empty(symbol: Symbol, recording: bool) -> str:
         f"ثبت درون‌روزی «{symbol.name}» از {first} شروع شده و تا {last} داده دارد؛"
         " بازه‌ای که انتخاب کرده‌اید بیرون از این محدوده است. بازه را به «امروز» تغییر دهید."
     )
+
+
+def samples_as_candles(samples: Mapping[int, float]) -> list[Candle]:
+    """View stored samples as candles so they can be merged with extracted ones.
+
+    A recorded sample is a single observed price, so its OHLC all collapse to
+    that price - the same shape :func:`tgju_intraday.parse_page` produces.
+    """
+    return [
+        Candle(int(ts), float(price), float(price), float(price), float(price))
+        for ts, price in samples.items()
+    ]
 
 
 def aggregate_candles(

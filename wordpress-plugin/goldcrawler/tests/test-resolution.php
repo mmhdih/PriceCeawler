@@ -108,10 +108,12 @@ gc_test_stub_remote_get('platform.tgju.org', array('code' => 200, 'body' => json
     'c' => array(80100000, 80400000),
 ))));
 
-$extracted = GC_Crawler::build_at(array('geram18'), $start, $end, true, false, '10m');
-gc_check(count($extracted['series']) === 1, 'extraction produces a series');
+// A key with NO stored samples, so this isolates extraction; a key that has
+// both is covered by the merge section below.
+$extracted = GC_Crawler::build_at(array('extract_only'), $start, $end, true, false, '10m');
+gc_check(count($extracted['series']) === 1, 'extraction alone produces a series');
 $xrow = $extracted['series'][0]['rows'][0];
-gc_check($xrow['close'] === 8040000, 'the rows came from extraction, not the recorded samples');
+gc_check($xrow['close'] === 8040000, 'the rows came from extraction');
 gc_check($xrow['high'] === 8060000, 'the bucket high is the max of the extracted bar highs');
 gc_check($xrow['low'] === 7990000, 'the bucket low is the min of the extracted bar lows');
 gc_check($xrow['samples'] === 2, 'the sample count is the number of extracted bars');
@@ -127,6 +129,78 @@ gc_check($forced['series'][0]['rows'][0]['close'] === 7020000,
     'forcing the recorded source ignores the chart service');
 
 GC_Storage::update_settings(array('intraday_source' => 'auto', 'intraday_endpoint' => ''));
+$GLOBALS['gc_test_remote_get_responses'] = array();
+gc_test_stub_remote_get('geram18', array('code' => 200, 'body' => json_encode(array('data' => array(
+    array('70000000', '69900000', '70100000', '70000000', '', '', '2025-08-19', '1404/05/28'),
+)))));
+
+// -- stored and extracted data are MERGED, not chosen between ---------------
+// The reported bug: TGJU's page only carries today, so preferring extraction
+// over the store silently dropped every earlier day of the range.
+
+$GLOBALS['gc_test_remote_get_responses'] = array();
+GC_Storage::update_settings(array('intraday_source' => 'auto', 'intraday_endpoint' => ''));
+
+// Yesterday exists only in the local store...
+// Stored prices are already in display units - the sampler divides before
+// recording - unlike the raw rial the chart response carries.
+$gc_yesterday_base = $base - 86400;              // 1404/05/27, 09:30 Tehran
+GC_Intraday::record('merge_test', 6000000, $gc_yesterday_base);
+GC_Intraday::record('merge_test', 6010000, $gc_yesterday_base + 600);
+
+// ...and today only in the live chart response.
+gc_test_stub_remote_get('tgju.org', array('code' => 200, 'body' => json_encode(array(
+    's' => 'ok',
+    't' => array($base, $base + 600),
+    'c' => array(70000000, 70200000),
+))));
+
+$gc_span = GC_Crawler::build_at(
+    array('merge_test'), array(1404, 5, 27), array(1404, 5, 28), true, false, '10m'
+);
+gc_check(count($gc_span['series']) === 1, 'a two-day intraday range builds a series');
+$gc_days = array_unique(array_column($gc_span['series'][0]['rows'], 'date'));
+sort($gc_days);
+gc_check(
+    $gc_days === array('1404/05/27', '1404/05/28'),
+    'the range covers BOTH the stored day and the extracted day'
+);
+gc_check(count($gc_span['series'][0]['rows']) === 4, 'every bucket from both sources is present');
+
+// The stored day survives even when the chart source answers for today.
+$gc_rows = $gc_span['series'][0]['rows'];
+$gc_first = $gc_rows[0];
+gc_check($gc_first['date'] === '1404/05/27' && $gc_first['close'] === 6000000,
+    'the earlier stored day is the first row, with its own price');
+
+// Live data wins for a timestamp present in both, since the store was
+// harvested from it in the first place.
+GC_Intraday::record('merge_test', 1111111, $base);   // a stale stored copy
+$gc_span = GC_Crawler::build_at(
+    array('merge_test'), array(1404, 5, 28), array(1404, 5, 28), true, false, 'tick'
+);
+$gc_closes = array_column($gc_span['series'][0]['rows'], 'close');
+gc_check(!in_array(1111111, $gc_closes, true) && in_array(7000000, $gc_closes, true),
+    'extracted data wins over a stored copy of the same timestamp');
+
+// "recorded" still ignores the chart source entirely.
+GC_Storage::update_settings(array('intraday_source' => 'recorded'));
+$gc_only_stored = GC_Crawler::build_at(
+    array('merge_test'), array(1404, 5, 27), array(1404, 5, 27), true, false, '10m'
+);
+gc_check(count($gc_only_stored['series'][0]['rows']) === 2,
+    'forcing the recorded source still reads only the store');
+
+// "tgju" ignores the store entirely.
+GC_Storage::update_settings(array('intraday_source' => 'tgju'));
+$gc_only_live = GC_Crawler::build_at(
+    array('merge_test'), array(1404, 5, 27), array(1404, 5, 28), true, false, '10m'
+);
+$gc_days = array_unique(array_column($gc_only_live['series'][0]['rows'], 'date'));
+gc_check($gc_days === array('1404/05/28'),
+    'forcing the TGJU source reports only what the chart returned');
+
+GC_Storage::update_settings(array('intraday_source' => 'auto'));
 $GLOBALS['gc_test_remote_get_responses'] = array();
 gc_test_stub_remote_get('geram18', array('code' => 200, 'body' => json_encode(array('data' => array(
     array('70000000', '69900000', '70100000', '70000000', '', '', '2025-08-19', '1404/05/28'),

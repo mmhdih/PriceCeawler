@@ -136,6 +136,94 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(row["last"], "2025-08-20")
 
 
+class TestRecordMany(unittest.TestCase):
+    """Bulk storage, used when harvesting a whole published day at once."""
+
+    def setUp(self):
+        self.key = f"many_{self.id().rsplit('.', 1)[-1]}"
+        self.day = tehran(2025, 8, 19, 10, 0, 0)
+
+    def read(self, span=2 * 86400):
+        return intraday.load_samples(self.key, self.day - span, self.day + span)
+
+    def test_a_batch_is_stored_and_counted(self):
+        added = intraday.record_many(
+            self.key, {self.day: 100, self.day + 600: 110, self.day + 1200: 120}
+        )
+        self.assertEqual(added, 3)
+        self.assertEqual(list(self.read().values()), [100.0, 110.0, 120.0])
+
+    def test_points_already_stored_are_not_counted_again(self):
+        intraday.record_many(self.key, {self.day: 100})
+        added = intraday.record_many(self.key, {self.day: 100, self.day + 600: 110})
+        self.assertEqual(added, 1)
+        self.assertEqual(len(self.read()), 2)
+
+    def test_a_batch_spanning_midnight_lands_in_both_day_files(self):
+        """Files are split by Tehran day, so grouping must be by local date."""
+        late = tehran(2025, 8, 19, 23, 50, 0)
+        early = tehran(2025, 8, 20, 0, 10, 0)
+        self.assertEqual(intraday.record_many(self.key, {late: 100, early: 110}), 2)
+        row = next(r for r in intraday.summary() if r["key"] == self.key)
+        self.assertEqual(row["days"], 2)
+
+    def test_unusable_points_are_dropped_without_losing_the_good_ones(self):
+        # A non-finite price serialises as an invalid JSON token, which would
+        # make every later read of the day file fail.
+        added = intraday.record_many(
+            self.key,
+            {
+                self.day: float("nan"),
+                self.day + 60: float("inf"),
+                self.day + 120: 0,
+                self.day + 180: -5,
+                self.day + 240: "abc",
+                self.day + 300: 7_000_000,
+            },
+        )
+        self.assertEqual(added, 1)
+        self.assertEqual(list(self.read().values()), [7_000_000.0])
+        # The file is still valid JSON, so it reads back at all.
+        self.assertEqual(len(self.read()), 1)
+
+    def test_an_empty_batch_writes_nothing(self):
+        self.assertEqual(intraday.record_many(self.key, {}), 0)
+        self.assertEqual(self.read(), {})
+
+    def test_a_day_file_never_grows_past_the_cap(self):
+        over = intraday.MAX_SAMPLES_PER_DAY + 50
+        intraday.record_many(self.key, {self.day + i: 100 + i for i in range(over)})
+        stored = self.read()
+        self.assertEqual(len(stored), intraday.MAX_SAMPLES_PER_DAY)
+        # The newest samples are the ones kept.
+        self.assertEqual(max(stored), self.day + over - 1)
+
+
+class TestSamplesAsCandles(unittest.TestCase):
+    def test_a_sample_becomes_a_flat_candle(self):
+        candles = intraday.samples_as_candles({1_700_000_000: 7_100_000})
+        self.assertEqual(len(candles), 1)
+        candle = candles[0]
+        self.assertEqual(candle.ts, 1_700_000_000)
+        self.assertEqual(
+            (candle.open, candle.high, candle.low, candle.close),
+            (7_100_000.0,) * 4,
+        )
+
+    def test_the_result_feeds_straight_into_aggregate_candles(self):
+        """Stored and extracted data must go through one bucketing path."""
+        base = tehran(2025, 8, 19, 10, 0, 0)
+        rows = intraday.aggregate_candles(
+            intraday.samples_as_candles({base: 100, base + 60: 120}), "10m"
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["low"], rows[0]["high"]), (100, 120))
+        self.assertEqual(rows[0]["samples"], 2)
+
+    def test_no_samples_gives_no_candles(self):
+        self.assertEqual(intraday.samples_as_candles({}), [])
+
+
 class TestAggregate(unittest.TestCase):
     def setUp(self):
         base = tehran(2025, 8, 19, 9, 0, 0)

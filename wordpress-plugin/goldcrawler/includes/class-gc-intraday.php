@@ -167,6 +167,53 @@ final class GC_Intraday {
         return true;
     }
 
+    /**
+     * Store many observations at once.
+     *
+     * The whole point is one read+write per day file instead of one per
+     * point: harvesting a full day is ~144 points, and record() would
+     * re-read and re-write the file for every one of them.
+     *
+     * @param array<int,float> $points timestamp => price
+     * @return int how many were newly stored
+     */
+    public static function record_many($symbol_key, $points) {
+        if (!is_array($points) || !$points) {
+            return 0;
+        }
+        // Group by local day, since that is how the files are split.
+        $by_day = array();
+        foreach ($points as $ts => $price) {
+            $ts = (int) $ts;
+            if ($ts <= 0 || !is_numeric($price)) {
+                continue;
+            }
+            $price = (float) $price;
+            if (!is_finite($price) || $price <= 0) {
+                continue;   // see record(): NAN would truncate the day file
+            }
+            $by_day[self::local_iso_date($ts)][$ts] = $price;
+        }
+
+        $added = 0;
+        foreach ($by_day as $iso => $day_points) {
+            $path = self::day_path($symbol_key, $iso, true);
+            $samples = self::read_day($path);
+            foreach ($day_points as $ts => $price) {
+                if (!isset($samples[$ts])) {
+                    $added++;
+                }
+                $samples[$ts] = $price;
+            }
+            ksort($samples);
+            if (count($samples) > self::MAX_SAMPLES_PER_DAY) {
+                $samples = array_slice($samples, -self::MAX_SAMPLES_PER_DAY, null, true);
+            }
+            self::write_day($path, $symbol_key, $samples);
+        }
+        return $added;
+    }
+
     /** @return array<int,float> timestamp => price */
     private static function read_day($path) {
         if (!is_file($path)) {
@@ -378,6 +425,24 @@ final class GC_Intraday {
             'status' => GC_Report::STATUS_LIVE,
             'live' => true,
         );
+    }
+
+    /**
+     * View stored samples as candles so they can be merged with extracted
+     * ones. A recorded sample is a single observed price, so its OHLC all
+     * collapse to that price - the same shape parse_page() produces.
+     *
+     * @param array<int,float> $samples timestamp => price
+     * @return array[] each: ts, open, high, low, close
+     */
+    public static function samples_as_candles($samples) {
+        $candles = array();
+        foreach ($samples as $ts => $price) {
+            $price = (float) $price;
+            $candles[] = array('ts' => (int) $ts, 'open' => $price,
+                'high' => $price, 'low' => $price, 'close' => $price);
+        }
+        return $candles;
     }
 
     /**

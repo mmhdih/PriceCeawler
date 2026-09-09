@@ -207,5 +207,111 @@ gc_check(count($gc_left) === 1, 'an explicit retention argument overrides the se
 
 GC_Storage::update_settings(array('retention_days' => 30), true);
 
+
+// -- record_many(): bulk storage for a harvested day ------------------------
+// One read+write per day file instead of one per point: a harvested day is
+// ~144 points, and record() would rewrite the file for every one of them.
+
+$gc_bulk_day = gmmktime(6, 30, 0, 8, 19, 2025);   // 10:00 Tehran
+$gc_added = GC_Intraday::record_many('bulk_test', array(
+    $gc_bulk_day => 100,
+    $gc_bulk_day + 600 => 110,
+    $gc_bulk_day + 1200 => 120,
+));
+gc_check($gc_added === 3, 'a batch reports how many points it stored');
+$gc_bulk = GC_Intraday::load_samples('bulk_test', $gc_bulk_day - 60, $gc_bulk_day + 3600);
+gc_check(
+    array_values($gc_bulk) === array(100.0, 110.0, 120.0),
+    'every point of the batch is stored in order'
+);
+
+$gc_added = GC_Intraday::record_many('bulk_test', array(
+    $gc_bulk_day => 100, $gc_bulk_day + 1800 => 130,
+));
+gc_check($gc_added === 1, 'points already stored are not counted again');
+gc_check(
+    count(GC_Intraday::load_samples('bulk_test', $gc_bulk_day - 60, $gc_bulk_day + 3600)) === 4,
+    'a re-run adds only what is new'
+);
+
+// Files are split by Tehran day, so a batch crossing midnight must be split.
+$gc_late = gmmktime(20, 20, 0, 8, 19, 2025);   // 23:50 Tehran
+$gc_early = gmmktime(20, 40, 0, 8, 19, 2025);  // 00:10 Tehran, next day
+gc_check(
+    GC_Intraday::record_many('bulk_midnight', array($gc_late => 100, $gc_early => 110)) === 2,
+    'a batch spanning midnight stores both points'
+);
+$gc_row = null;
+foreach (GC_Intraday::summary() as $gc_entry) {
+    if ($gc_entry['key'] === 'bulk_midnight') { $gc_row = $gc_entry; }
+}
+gc_check($gc_row !== null && $gc_row['days'] === 2, 'the batch landed in two day files');
+
+// A non-finite price serialises as an invalid JSON token; one such point
+// would make wp_json_encode() fail and truncate the whole day file.
+$gc_added = GC_Intraday::record_many('bulk_bad', array(
+    $gc_bulk_day => NAN,
+    $gc_bulk_day + 60 => INF,
+    $gc_bulk_day + 120 => 0,
+    $gc_bulk_day + 180 => -5,
+    $gc_bulk_day + 240 => 'abc',
+    $gc_bulk_day + 300 => 7000000,
+));
+gc_check($gc_added === 1, 'unusable points are dropped from a batch');
+$gc_bad = GC_Intraday::load_samples('bulk_bad', $gc_bulk_day - 60, $gc_bulk_day + 3600);
+gc_check(
+    array_values($gc_bad) === array(7000000.0),
+    'the good point of a mixed batch is still readable back'
+);
+
+gc_check(GC_Intraday::record_many('bulk_empty', array()) === 0, 'an empty batch stores nothing');
+gc_check(GC_Intraday::record_many('bulk_empty', 'not-an-array') === 0, 'a non-array batch is refused');
+
+// The per-day cap still holds, keeping the newest points.
+$gc_many = array();
+$gc_over = GC_Intraday::MAX_SAMPLES_PER_DAY + 50;
+for ($gc_i = 0; $gc_i < $gc_over; $gc_i++) {
+    $gc_many[$gc_bulk_day + $gc_i] = 100 + $gc_i;
+}
+GC_Intraday::record_many('bulk_cap', $gc_many);
+$gc_capped = GC_Intraday::load_samples('bulk_cap', $gc_bulk_day - 60, $gc_bulk_day + $gc_over + 60);
+gc_check(
+    count($gc_capped) === GC_Intraday::MAX_SAMPLES_PER_DAY,
+    'a bulk write cannot grow a day file past the cap'
+);
+gc_check(
+    isset($gc_capped[$gc_bulk_day + $gc_over - 1]),
+    'the newest points are the ones the cap keeps'
+);
+
+
+// -- samples_as_candles(): one bucketing path for both sources --------------
+// Stored samples must be mergeable with extracted candles, so they are
+// viewed as flat bars (a single observed price has no separate OHLC).
+
+$gc_flat = GC_Intraday::samples_as_candles(array(1700000000 => 7100000));
+gc_check(count($gc_flat) === 1, 'each sample becomes one candle');
+gc_check(
+    $gc_flat[0]['ts'] === 1700000000 && $gc_flat[0]['open'] === 7100000.0
+        && $gc_flat[0]['high'] === 7100000.0 && $gc_flat[0]['low'] === 7100000.0
+        && $gc_flat[0]['close'] === 7100000.0,
+    'a flat candle carries the observed price in every OHLC field'
+);
+gc_check(GC_Intraday::samples_as_candles(array()) === array(), 'no samples gives no candles');
+
+$gc_merged_rows = GC_Intraday::aggregate_candles(
+    GC_Intraday::samples_as_candles(array($gc_bulk_day => 100, $gc_bulk_day + 60 => 120)),
+    '10m',
+    0
+);
+gc_check(count($gc_merged_rows) === 1, 'flat candles bucket like any other bar');
+gc_check(
+    // Rounded to the symbol's precision, so an integer price stays an int.
+    (float) $gc_merged_rows[0]['low'] === 100.0
+        && (float) $gc_merged_rows[0]['high'] === 120.0
+        && $gc_merged_rows[0]['samples'] === 2,
+    'a bucket of flat candles keeps the true extremes of the samples'
+);
+
 echo "checks: {$checks}, failures: {$failures}\n";
 exit($failures > 0 ? 1 : 0);

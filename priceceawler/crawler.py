@@ -200,9 +200,12 @@ class Crawler:
     ) -> CrawlResult:
         """Build series at the requested resolution.
 
-        Daily goes to TGJU (which only serves daily rows); the intraday
-        resolutions are served from our own recorded samples, since no amount
-        of asking the daily endpoint can recover the last ten minutes.
+        Daily goes to TGJU's history endpoint. The intraday resolutions come
+        from two sources merged together: the candles TGJU's chart source
+        publishes for the requested range, and whatever the local sampler has
+        harvested before now. Neither alone covers a multi-day range - the
+        chart source carries only today, and the store only the days sampling
+        was running for.
         """
         resolution = intraday.normalise_resolution(resolution)
         if not intraday.is_intraday(resolution):
@@ -227,23 +230,37 @@ class Crawler:
             rows: list[dict] = []
             fetch_error: str | None = None
 
-            # Extraction first: it can answer for any past range, whereas
-            # recorded samples only cover time the sampler was running for.
+            # Both sources are MERGED, not chosen between. TGJU's page only
+            # carries today, while the local store holds the days already
+            # harvested - so preferring one would silently drop the other half
+            # of a multi-day range.
+            merged: dict[int, tgju_intraday.Candle] = {}
+
+            if source in ("auto", "recorded"):
+                stored = intraday.load_samples(symbol.key, from_ts, to_ts)
+                for candle in intraday.samples_as_candles(stored):
+                    merged[candle.ts] = candle
+
             if source in ("auto", "tgju"):
                 try:
                     candles, endpoint, native = tgju_intraday.fetch_candles(
                         symbol, from_ts, to_ts,
                         endpoints=endpoints, resolutions=natives,
                     )
-                    rows = intraday.aggregate_candles(candles, resolution, symbol.decimals)
-                    if rows:
+                    for candle in candles:
+                        # Live data wins for a timestamp we also stored: it is
+                        # the source the stored copy was harvested from.
+                        merged[candle.ts] = candle
+                    if candles:
                         # Remember what worked so later requests skip probing.
                         self._pin_endpoint(endpoint.name, native)
                 except TgjuError as exc:
                     fetch_error = str(exc)
 
-            if not rows and source in ("auto", "recorded"):
-                rows = intraday.build_rows(symbol, start, end, resolution)
+            if merged:
+                rows = intraday.aggregate_candles(
+                    [merged[ts] for ts in sorted(merged)], resolution, symbol.decimals
+                )
 
             if not rows:
                 # Say why there is nothing and what to do about it - "no data"
@@ -288,8 +305,48 @@ class Crawler:
             self._pin_endpoint(working["endpoint"], working.get("resolution", ""))
         return {"symbol": symbol.key, "working": working, "attempts": report}
 
+    def _harvest(self, symbol: Symbol) -> int:
+        """Store every intraday point TGJU currently publishes for one symbol.
+
+        Returns how many points were newly stored, or 0 when the chart source
+        has nothing for it (the caller then records the live price instead).
+        Never raises: one symbol's failed harvest must not stop the scheduler
+        from sampling the rest.
+        """
+        if str(self.settings.get("intraday_source") or "auto") == "recorded":
+            return 0  # the user asked us not to touch the chart source
+
+        now = int(time.time())
+        try:
+            candles, _endpoint, _native = tgju_intraday.fetch_candles(
+                symbol,
+                # A day and a half back: the page carries today (and often
+                # yesterday), and re-storing a point we already have is free.
+                now - 36 * 3600,
+                now,
+                endpoints=tgju_intraday.endpoints_from_setting(
+                    str(self.settings.get("intraday_endpoint") or "")
+                ),
+                resolutions=tgju_intraday.resolutions_from_setting(
+                    str(self.settings.get("intraday_native") or "")
+                ),
+            )
+        except (TgjuError, OSError, ValueError):
+            return 0
+
+        points: dict[int, float] = {}
+        for candle in candles:
+            price = candle.close if candle.close is not None else candle.open
+            if price is not None:
+                points[int(candle.ts)] = float(price)
+        return intraday.record_many(symbol.key, points)
+
     def sample_intraday(self, keys: Sequence[str] | None = None) -> dict:
-        """Record one intraday sample per watched symbol.
+        """Harvest intraday data for every scheduled symbol.
+
+        For each symbol it first tries to store TGJU's whole published
+        intraday series (see :meth:`_harvest`), and only falls back to
+        recording the single current price when that source has nothing.
 
         A failed fetch records nothing: ``points_for`` deliberately falls back
         to cached data when the network is down ("stale data beats no data"),
@@ -302,6 +359,16 @@ class Crawler:
         errors: list[dict[str, str]] = []
 
         for symbol in self.resolve(keys):
+            # Prefer harvesting TGJU's own intraday series for the whole day.
+            # Its profile page carries every 10-minute point of today, so one
+            # request captures the complete day - which means a missed run
+            # leaves no gap, and the stored history is TGJU's own data rather
+            # than an artefact of when we happened to sample.
+            if self._harvest(symbol) > 0:
+                recorded.append(symbol.key)
+                continue
+
+            # Otherwise fall back to recording the single current price.
             try:
                 points, from_cache = self.points_for(symbol, force=True)
             except TgjuError as exc:

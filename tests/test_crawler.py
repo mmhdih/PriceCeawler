@@ -321,6 +321,39 @@ class TestIntradaySource(unittest.TestCase):
         # A user-supplied URL must survive a successful fetch.
         self.assertEqual(self.crawler.settings.get("intraday_endpoint"), template)
 
+    def test_a_multi_day_range_merges_stored_days_with_todays_extraction(self):
+        """The reported bug: a selected range came back holding only today.
+
+        TGJU's page publishes today only, so a report that prefers extraction
+        over the store loses every earlier day the sampler already harvested.
+        """
+        yesterday = self.today.add_days(-1)
+        intraday.record(self.key, 6_400_000, self.base - 86_400)
+        intraday.record(self.key, 6_450_000, self.base - 86_400 + 120)
+        self.stub_fetch(self.bars())
+
+        result = self.crawler.build_at(
+            [self.key], yesterday, self.today, resolution="10m"
+        )
+        rows = result.series[0].rows
+        self.assertEqual(
+            sorted({row["date"] for row in rows}), [str(yesterday), str(self.today)]
+        )
+        self.assertEqual(rows[0]["close"], 6_450_000)   # stored yesterday
+        self.assertEqual(rows[-1]["close"], 7_095_000)  # extracted today
+
+    def test_live_data_wins_for_a_timestamp_that_is_also_stored(self):
+        """A stored sample is a copy of the same source, so never override."""
+        intraday.record(self.key, 1_111_111, self.base)
+        self.stub_fetch(self.bars()[:1])
+        result = self.crawler.build_at(
+            [self.key], self.today, self.today, resolution="10m"
+        )
+        rows = result.series[0].rows
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["samples"], 1)
+        self.assertEqual(rows[0]["close"], 7_010_000)
+
     def test_daily_still_bypasses_the_intraday_path_entirely(self):
         self.stub_fetch(self.bars())
         result = self.crawler.build_at(
@@ -332,11 +365,16 @@ class TestIntradaySource(unittest.TestCase):
 
 
 class TestSampleIntraday(unittest.TestCase):
+    """The fallback path: recording the single current price."""
+
     def setUp(self):
         self.crawler = Crawler(Settings(tempfile.mktemp(suffix=".json")))
         # A key per test: two tests recording in the same second would
         # otherwise hit record()'s duplicate-timestamp guard.
         self.key = f"sample_{self.id().rsplit('.', 1)[-1]}"
+        # These tests are about the single-price fallback, so switch the chart
+        # source off rather than letting them reach the real network.
+        self.crawler.settings.update({"intraday_source": "recorded"})
 
     def stub_points(self, *, from_cache=False, error=None, close=7_300_000):
         def points_for(symbol, force=False):
@@ -385,6 +423,97 @@ class TestSampleIntraday(unittest.TestCase):
         self.assertEqual(self.crawler.sample_intraday()["recorded"], [self.key])
 
 
+class TestHarvest(unittest.TestCase):
+    """Sampling stores TGJU's whole published series, not just this instant.
+
+    One request captures every 10-minute point of the day, so a missed run
+    leaves no gap and the stored history is TGJU's own data rather than an
+    artefact of when we happened to sample.
+    """
+
+    def setUp(self):
+        self.crawler = Crawler(Settings(tempfile.mktemp(suffix=".json")))
+        self.key = f"harvest_{self.id().rsplit('.', 1)[-1]}"
+        self.base = int(time.time()) - 3600
+        self.asked = []
+        self.points_asked = []
+
+        def points_for(symbol, force=False):
+            self.points_asked.append(symbol.key)
+            return [PricePoint(str(JalaliDate.today()), "", None, 1, 2, 9_999_999)], False
+        self.crawler.points_for = points_for
+
+    def tearDown(self):
+        crawler_module.tgju_intraday.fetch_candles = _ORIGINAL_FETCH_CANDLES
+
+    def stub_fetch(self, candles=None, error=None):
+        def fetch(symbol, from_ts, to_ts, *, endpoints=None, **kwargs):
+            self.asked.append((symbol.key, from_ts, to_ts))
+            if error is not None:
+                raise error
+            return (candles or []), tgju_intraday.CANDIDATES[0], "1"
+        crawler_module.tgju_intraday.fetch_candles = fetch
+
+    def stored(self):
+        now = int(time.time())
+        return intraday.load_samples(self.key, now - 86_400 * 2, now + 120)
+
+    def test_every_published_point_is_stored_in_one_pass(self):
+        Candle = tgju_intraday.Candle
+        self.stub_fetch([
+            Candle(self.base, 1.0, 1.0, 1.0, 7_000_000),
+            Candle(self.base + 600, 1.0, 1.0, 1.0, 7_010_000),
+            Candle(self.base + 1200, 1.0, 1.0, 1.0, 7_020_000),
+        ])
+        result = self.crawler.sample_intraday([self.key])
+        self.assertEqual(result["recorded"], [self.key])
+        self.assertEqual(
+            list(self.stored().values()), [7_000_000.0, 7_010_000.0, 7_020_000.0]
+        )
+        # A harvest already covers now, so the live price is not asked for.
+        self.assertEqual(self.points_asked, [])
+
+    def test_the_harvest_window_reaches_back_past_midnight(self):
+        """Asking only for "now" would return a single point, not the day."""
+        self.stub_fetch([tgju_intraday.Candle(self.base, 1.0, 1.0, 1.0, 7_000_000)])
+        self.crawler.sample_intraday([self.key])
+        _key, from_ts, to_ts = self.asked[0]
+        self.assertGreaterEqual(to_ts - from_ts, 24 * 3600)
+
+    def test_a_failed_harvest_falls_back_to_the_live_price(self):
+        self.stub_fetch(error=TgjuError("سرویس نمودار پاسخ نداد."))
+        result = self.crawler.sample_intraday([self.key])
+        self.assertEqual(result["recorded"], [self.key])
+        self.assertEqual(self.points_asked, [self.key])
+        self.assertEqual(list(self.stored().values()), [9_999_999.0])
+
+    def test_an_empty_harvest_falls_back_to_the_live_price(self):
+        self.stub_fetch([])
+        result = self.crawler.sample_intraday([self.key])
+        self.assertEqual(result["recorded"], [self.key])
+        self.assertEqual(list(self.stored().values()), [9_999_999.0])
+
+    def test_source_recorded_never_touches_the_chart_source(self):
+        self.crawler.settings.update({"intraday_source": "recorded"})
+        self.stub_fetch([tgju_intraday.Candle(self.base, 1.0, 1.0, 1.0, 7_000_000)])
+        self.crawler.sample_intraday([self.key])
+        self.assertEqual(self.asked, [])
+        self.assertEqual(list(self.stored().values()), [9_999_999.0])
+
+    def test_re_harvesting_the_same_points_does_not_duplicate_them(self):
+        """A scheduler firing twice must not store the same point again."""
+        candles = [tgju_intraday.Candle(self.base, 1.0, 1.0, 1.0, 7_000_000)]
+        self.stub_fetch(candles)
+        self.crawler.sample_intraday([self.key])
+        self.crawler.sample_intraday([self.key])
+        prices = list(self.stored().values())
+        self.assertEqual(prices.count(7_000_000.0), 1)
+        # The second harvest added nothing, so that pass recorded the live
+        # price instead - which is new information, not a duplicate.
+        self.assertEqual(self.points_asked, [self.key])
+        self.assertIn(9_999_999.0, prices)
+
+
 class TestScheduledSymbols(unittest.TestCase):
     """What the background sampler records is its own setting."""
 
@@ -408,7 +537,8 @@ class TestScheduledSymbols(unittest.TestCase):
 
     def test_sampling_uses_the_scheduled_list_when_no_keys_are_given(self):
         self.crawler.settings.update(
-            {"symbols": ["price_dollar_rl"], "sampler_symbols": ["geram18"]}
+            {"symbols": ["price_dollar_rl"], "sampler_symbols": ["geram18"],
+             "intraday_source": "recorded"}
         )
         asked = []
 

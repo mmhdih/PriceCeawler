@@ -154,15 +154,30 @@ final class GC_Crawler {
 
             // Extraction first: it can answer for any past range, whereas
             // recorded samples only cover time the sampler was running for.
+            // Both sources are MERGED, not chosen between. TGJU's page only
+            // carries today, while the local store holds the days already
+            // harvested - so preferring one would silently drop the other
+            // half of a multi-day range.
+            $merged = array();   // ts => candle
+
+            if ($source === 'auto' || $source === 'recorded') {
+                $stored = GC_Intraday::load_samples($symbol['key'], $from_ts, $to_ts);
+                foreach (GC_Intraday::samples_as_candles($stored) as $candle) {
+                    $merged[$candle['ts']] = $candle;
+                }
+            }
+
             if ($source === 'auto' || $source === 'tgju') {
                 try {
                     $fetched = GC_TGJU_Intraday::fetch_candles(
                         $symbol, $from_ts, $to_ts, $endpoints, $natives
                     );
-                    $rows = GC_Intraday::aggregate_candles(
-                        $fetched['candles'], $resolution, $symbol['decimals']
-                    );
-                    if ($rows) {
+                    foreach ($fetched['candles'] as $candle) {
+                        // Live data wins for a timestamp we also stored: it is
+                        // the source the stored copy was harvested from.
+                        $merged[$candle['ts']] = $candle;
+                    }
+                    if ($fetched['candles']) {
                         // Remember what worked so later requests skip probing.
                         self::pin_intraday_endpoint(
                             $fetched['endpoint'], $fetched['resolution'], $settings
@@ -173,9 +188,11 @@ final class GC_Crawler {
                 }
             }
 
-            if (!$rows && ($source === 'auto' || $source === 'recorded')) {
-                $built = GC_Intraday::build_series($symbol, $start, $end, $resolution);
-                $rows = $built['rows'];
+            if ($merged) {
+                ksort($merged);
+                $rows = GC_Intraday::aggregate_candles(
+                    array_values($merged), $resolution, $symbol['decimals']
+                );
             }
 
             if (!$rows) {

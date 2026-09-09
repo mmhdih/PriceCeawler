@@ -103,6 +103,48 @@ final class GC_Sampler {
         return isset($settings['symbols']) ? (array) $settings['symbols'] : array();
     }
 
+    /**
+     * Store every intraday point TGJU currently publishes for one symbol.
+     *
+     * Returns the number of newly stored points, or 0 when the chart source
+     * has nothing for it (in which case the caller records the live price
+     * instead). Never throws: a harvest failure must not stop the scheduler
+     * from sampling the remaining symbols.
+     */
+    private static function harvest($symbol) {
+        $settings = GC_Storage::get_settings();
+        if (isset($settings['intraday_source']) && $settings['intraday_source'] === 'recorded') {
+            return 0;   // the admin asked us not to touch the chart source
+        }
+        $now = time();
+        try {
+            $fetched = GC_TGJU_Intraday::fetch_candles(
+                $symbol,
+                // A day and a half back: the page carries today (and often
+                // yesterday), and re-storing a point we already have is free.
+                $now - (36 * 3600),
+                $now,
+                GC_TGJU_Intraday::endpoints_from_setting(
+                    isset($settings['intraday_endpoint']) ? $settings['intraday_endpoint'] : ''
+                ),
+                GC_TGJU_Intraday::resolutions_from_setting(
+                    isset($settings['intraday_native']) ? $settings['intraday_native'] : ''
+                )
+            );
+        } catch (Exception $exc) {
+            return 0;
+        }
+
+        $points = array();
+        foreach ($fetched['candles'] as $candle) {
+            $price = $candle['close'] !== null ? $candle['close'] : $candle['open'];
+            if ($price !== null) {
+                $points[(int) $candle['ts']] = (float) $price;
+            }
+        }
+        return GC_Intraday::record_many($symbol['key'], $points);
+    }
+
     /** @param string[]|null $keys symbols to sample; defaults to the watched list */
     public static function sample_now($keys = null) {
         $settings = GC_Storage::get_settings();
@@ -112,6 +154,18 @@ final class GC_Sampler {
         $errors = array();
 
         foreach (GC_Crawler::resolve((array) $keys) as $symbol) {
+            // Prefer harvesting TGJU's own intraday series for the whole day.
+            // Its profile page carries every 10-minute point of today, so one
+            // request captures the complete day - which means a missed cron
+            // fire leaves no gap, and the stored history is TGJU's own data
+            // rather than an artefact of when we happened to sample.
+            $harvested = self::harvest($symbol);
+            if ($harvested > 0) {
+                $recorded[] = $symbol['key'];
+                continue;
+            }
+
+            // Otherwise fall back to recording the single current price.
             try {
                 list($points, $from_cache) = GC_Crawler::points_for($symbol, true);
                 // points_for() deliberately falls back to cached data when the
